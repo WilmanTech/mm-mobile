@@ -3,6 +3,32 @@
 > Guía para agentes (humanos o AI) que trabajen en este repo. Describe
 > arquitectura, comandos, convenciones y gotchas específicas del proyecto.
 
+## Branching convention
+
+- **`main`** — releases estables. Recibe merges desde `develop` cuando una
+  iteración está lista para release. Protegida: no se commitea directamente.
+- **`develop`** — integración. Aquí llegan los merges de `feature/*` y
+  el trabajo nuevo que todavía no es release. Rama default del repo.
+- **`feature/*`** — trabajo en curso (e.g. `feat/parity-avd-e2e`,
+  `feat/vm-mirror-mm-sync`). Se mergean a `develop` vía PR.
+
+Workflow típico:
+```bash
+git checkout develop && git pull --rebase origin develop
+git checkout -b feature/mi-feature
+# ... trabajo ...
+git push -u origin feature/mi-feature
+# abrir PR contra develop
+```
+
+Para promover `develop` a release:
+```bash
+git checkout main && git pull
+git merge --no-ff develop
+git tag -a vX.Y.Z -m "release notes"
+git push origin main --tags
+```
+
 ## Stack
 
 - **Lenguaje compartido**: Kotlin 2.0.21 (Multiplatform)
