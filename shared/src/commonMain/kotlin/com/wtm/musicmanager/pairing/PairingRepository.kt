@@ -1,10 +1,9 @@
 package com.wtm.musicmanager.pairing
 
-import com.wtm.musicmanager.network.ConfirmPairingRequest
-import com.wtm.musicmanager.network.MusicManagerApi
-import com.wtm.musicmanager.network.PairingStatusResponse
-import com.wtm.musicmanager.network.StartPairingRequest
 import com.wtm.musicmanager.network.AuthStorage
+import com.wtm.musicmanager.network.MusicManagerApi
+import com.wtm.musicmanager.network.PairingConfirmRequest
+import com.wtm.musicmanager.network.PairingStartRequest
 import io.ktor.client.statement.HttpResponse
 import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,31 +15,29 @@ import kotlinx.datetime.Clock
  * Drives the mobile-side pairing handshake against a MusicManager backend.
  *
  * Flow (mirrors the desktop-side QR flow):
- *   1. UI calls [start] → server returns session_id + 4-word code.
+ *   1. UI calls [start] → server returns session_id, token, code, expires_in.
+ *      The token is the future bearer credential. We persist it tentatively
+ *      to AuthStorage so a network hiccup mid-pairing doesn't lose it.
  *   2. UI polls [refreshStatus] every 2s with the session_id.
- *   3. When status flips to "paired", server returns api_token. We persist
- *      it to [AuthStorage] and emit [PairingState.Paired] to observers.
+ *   3. When status.confirmed flips true, we know the desktop has approved.
+ *      The token is already in storage; we just transition state.
+ *   4. UI calls [confirm] if the user typed the 4-word code on the desktop
+ *      (we already know session_id+token+code from /start). confirm() updates
+ *      the device_name/device_type metadata.
  *
  * The StateFlow is the single source of truth for UI bindings (and for
  * SyncCoordinator's "should I attempt sync?" gate). Tests assert state
  * transitions with Turbine; production uses collectAsState().
  */
-/**
- * Reads/writes the pairing token + server label. Decoupled from the
- * concrete [AuthStorage] so tests can pass in a lambda-backed in-memory
- * store without spinning up EncryptedSharedPreferences or Keychain.
- */
 interface TokenStore {
     fun load(): String?
-    fun save(token: String, serverLabel: String?)
+    fun save(token: String)
     fun clear()
 
     companion object {
-        /** Wraps an [AuthStorage] in a TokenStore. */
         fun from(storage: AuthStorage): TokenStore = object : TokenStore {
             override fun load(): String? = storage.loadToken()
-            override fun save(token: String, serverLabel: String?) =
-                storage.saveToken(token, serverLabel)
+            override fun save(token: String) = storage.saveToken(token)
             override fun clear() = storage.clearToken()
         }
     }
@@ -55,24 +52,28 @@ class PairingRepository(
     val state: StateFlow<PairingState> = _state.asStateFlow()
 
     suspend fun start(
-        serverLabel: String? = null,
-        deviceName: String = "Music Manager Mobile",
+        deviceType: String? = "mobile",
     ): PairingState {
-        val response = api.startPairing(StartPairingRequest(deviceName = deviceName))
+        val response = api.startPairing(PairingStartRequest(deviceType = deviceType))
+        // Persist token immediately so a backend restart mid-pairing
+        // doesn't lose the credential — when /status reports confirmed,
+        // we already have it.
+        tokenStore.save(response.token)
         val newState = PairingState.Pending(
             sessionId = response.sessionId,
+            token = response.token,
             code = response.code,
             startedAt = now(),
-            expiresAt = response.expiresAt,
-            serverLabel = serverLabel,
+            expiresAt = now() + response.expiresIn * 1000L,
         )
         _state.value = newState
         return newState
     }
 
     /**
-     * Polls /api/pairing/status. On first "paired" response, persists the
-     * token to AuthStorage. Returns the new state.
+     * Polls /api/pairing/status. On first confirmed=true, transitions to
+     * Paired. The token is already in storage from start(); we don't need
+     * to re-save it.
      */
     suspend fun refreshStatus(sessionId: String): PairingState {
         val current = _state.value
@@ -80,21 +81,18 @@ class PairingRepository(
         if (current.sessionId != sessionId) return current
 
         val status = api.pairingStatus(sessionId)
-        val newState = when (status.status) {
-            "pending" -> current
-            "paired" -> {
-                val token = status.apiToken
-                    ?: error("Server reported paired status without api_token")
-                tokenStore.save(token, status.serverLabel)
+        val newState = when {
+            !status.exists -> PairingState.Expired(sessionId)
+            status.expired -> PairingState.Expired(sessionId)
+            status.revoked -> PairingState.Revoked(sessionId)
+            status.confirmed -> {
+                tokenStore.save(current.token)
                 PairingState.Paired(
-                    token = token,
+                    token = current.token,
                     deviceName = status.deviceName ?: "Unknown device",
-                    serverLabel = status.serverLabel,
-                    pairedAt = now(),
+                    pairedAt = status.confirmedAt?.let { (it * 1000L).toLong() } ?: now(),
                 )
             }
-            "expired" -> PairingState.Expired(sessionId)
-            "revoked" -> PairingState.Revoked(sessionId)
             else -> current
         }
         _state.value = newState
@@ -102,88 +100,109 @@ class PairingRepository(
     }
 
     /**
-     * Manual confirmation path — used when the mobile UI shows the code and
-     * the user types it into the desktop instead of scanning a QR.
-     * Wraps [MusicManagerApi.confirmPairing] and translates HTTP errors to
-     * PairingState transitions.
+     * Sends the user's typed 4-word code to the desktop (manual confirmation
+     * path — used when the mobile UI shows the code and the user types it
+     * on the desktop instead of scanning a QR). Backend ignores device_name
+     * and device_type if absent, so they're optional in the request.
      */
     suspend fun confirm(
         sessionId: String,
         code: String,
-        deviceName: String,
+        deviceName: String? = null,
+        deviceType: String? = "mobile",
     ): PairingState {
-        val response: HttpResponse = api.confirmPairing(
-            ConfirmPairingRequest(
-                sessionId = sessionId,
-                code = code,
-                deviceName = deviceName,
-            )
-        )
-        return when (response.status) {
-            HttpStatusCode.OK -> {
-                val status: PairingStatusResponse = api.pairingStatus(sessionId)
-                if (status.status == "paired" && status.apiToken != null) {
-                    tokenStore.save(status.apiToken, status.serverLabel)
-                    val paired = PairingState.Paired(
-                        token = status.apiToken,
-                        deviceName = status.deviceName ?: deviceName,
-                        serverLabel = status.serverLabel,
-                        pairedAt = now(),
-                    )
-                    _state.value = paired
-                    paired
-                } else {
-                    val pending = PairingState.Pending(
-                        sessionId = sessionId,
-                        code = code,
-                        startedAt = now(),
-                        expiresAt = null,
-                        serverLabel = null,
-                    )
-                    _state.value = pending
-                    pending
-                }
-            }
-            HttpStatusCode.NotFound, HttpStatusCode.Gone -> {
-                val expired = PairingState.Expired(sessionId)
-                _state.value = expired
-                expired
-            }
-            else -> {
-                val error = PairingState.Error(
+        return try {
+            val response = api.confirmPairing(
+                PairingConfirmRequest(
                     sessionId = sessionId,
-                    httpStatus = response.status.value,
+                    code = code,
+                    deviceName = deviceName,
+                    deviceType = deviceType,
                 )
-                _state.value = error
-                error
+            )
+            // Backend already persisted; refresh status to capture device_name
+            // and confirm any desktop-side race.
+            val status = api.pairingStatus(sessionId)
+            val newState = if (status.confirmed) {
+                tokenStore.save(response.token)
+                PairingState.Paired(
+                    token = response.token,
+                    deviceName = response.deviceName ?: status.deviceName ?: deviceName ?: "Unknown device",
+                    pairedAt = (response.pairedAt * 1000L).toLong(),
+                )
+            } else {
+                _state.value
             }
+            _state.value = newState
+            newState
+        } catch (e: Exception) {
+            val current = _state.value
+            if (current is PairingState.Pending) {
+                PairingState.Error(sessionId = sessionId, httpStatus = -1)
+            } else current
         }
     }
 
-    /** User-initiated cancel — wipes any persisted token and resets to Idle. */
+    /**
+     * User-initiated cancel. Wipes the persisted token and resets to Idle.
+     * Does NOT call /pairing/revoke — that's a separate concern for the
+     * user to manage from the desktop UI's "Connected devices" screen.
+     */
     fun unpair() {
         tokenStore.clear()
         _state.value = PairingState.Idle
     }
+
+    /**
+     * Restore from disk on app launch. If we have a token and /v1/ping
+     * returns 200, transition to Paired. If 401, clear the stale token.
+     */
+    suspend fun restore(): PairingState {
+        val token = tokenStore.load() ?: run {
+            _state.value = PairingState.Idle
+            return PairingState.Idle
+        }
+        return try {
+            val response = api.ping()
+            if (response.status.value == 401) {
+                tokenStore.clear()
+                _state.value = PairingState.Idle
+                PairingState.Idle
+            } else {
+                val paired = PairingState.Paired(
+                    token = token,
+                    deviceName = "Restored",
+                    pairedAt = now(),
+                )
+                _state.value = paired
+                paired
+            }
+        } catch (e: Exception) {
+            // Network failure — keep token, go Idle so UI shows "offline"
+            // until the user reconnects. Don't wipe a potentially-valid token
+            // just because the network is flaky on cold start.
+            _state.value = PairingState.Idle
+            PairingState.Idle
+        }
+    }
 }
 
 /**
- * Discriminated union of pairing lifecycle states. The set is closed on
- * purpose — every state transition emits one of these.
+ * Discriminated union of pairing lifecycle states. Closed on purpose —
+ * every state transition emits one of these.
  */
 sealed interface PairingState {
     data object Idle : PairingState
     data class Pending(
         val sessionId: String,
+        val token: String,
         val code: String,
         val startedAt: Long,
-        val expiresAt: Long?,
-        val serverLabel: String?,
+        val expiresAt: Long,
     ) : PairingState
     data class Paired(
         val token: String,
         val deviceName: String,
-        val serverLabel: String?,
         val pairedAt: Long,
     ) : PairingState
     data class Expired(val sessionId: String) : PairingState

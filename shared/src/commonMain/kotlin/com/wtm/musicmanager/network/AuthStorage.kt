@@ -1,7 +1,7 @@
 package com.wtm.musicmanager.network
 
 /**
- * Storage interface for the pairing token + server label.
+ * Storage interface for the pairing bearer token.
  *
  * expect/actual over Android (EncryptedSharedPreferences), iOS (Keychain),
  * and JVM (file-based for tests + dev). The token is what the auth
@@ -12,6 +12,6 @@ package com.wtm.musicmanager.network
  */
 expect class AuthStorage {
     fun loadToken(): String?
-    fun saveToken(token: String, serverLabel: String?)
+    fun saveToken(token: String)
     fun clearToken()
 }

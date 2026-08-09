@@ -17,7 +17,7 @@ import kotlinx.coroutines.flow.Flow
 sealed interface Connectivity {
     data object Offline : Connectivity
     data object Syncing : Connectivity
-    data class Connected(val serverLabel: String) : Connectivity
+    data class Connected(val deviceName: String) : Connectivity
 }
 
 interface ConnectivityMonitor {
