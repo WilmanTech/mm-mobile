@@ -69,11 +69,23 @@ kotlin {
             implementation(libs.kotest.assertions)
             implementation(libs.kotest.property)
             implementation(libs.turbine)
+            implementation(libs.ktor.client.mock)
+        }
+
+        // The JDBC sqlite-driver declares org.jetbrains.kotlin.platform.type=jvm,
+        // which would cause "platform.type 'jvm' vs 'native' mismatch" on iOS
+        // test variants if added to commonTest. We restrict it to jvmTest,
+        // where SyncCoordinatorTest.kt lives — that's the only place that
+        // exercises the SQLDelight JDBC driver against an in-memory DB.
+        jvmTest.dependencies {
+            implementation(libs.sqlite.jdbc)
+            implementation(libs.sqldelight.sqlite.driver)
         }
 
         androidMain.dependencies {
             implementation(libs.ktor.client.okhttp)
             implementation(libs.sqldelight.android.driver)
+            implementation(libs.androidx.security.crypto)
         }
 
         iosMain.dependencies {

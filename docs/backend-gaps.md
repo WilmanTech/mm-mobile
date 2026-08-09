@@ -22,20 +22,20 @@ MusicManager (`WilmanTech/MusicManager`). Estado al crear este repo.
 
 | Endpoint | Propósito |
 |---|---|
-| `GET /api/v1/sync/changes?since=<iso8601>` | Deltas incrementales de catálogo |
+| `GET /api/v1/sync/changes?since=<epoch_ms>` | Deltas incrementales de catálogo |
 | `GET /api/v1/sync/full` | Snapshot completo (bootstrap inicial) |
 
-**Response shape** (propuesta):
+**Estado Phase 1.1** (entregado `develop` de MusicManager backend, ver
+`WilmanTech/MusicManager@feature/mobile-sync-api`):
 
-```json
-{
-  "server_time": "2026-08-09T12:00:00Z",
-  "artists": [{ "id": 1, "name": "...", "updated_at": "...", "...": "..." }],
-  "albums":  [{ "id": 1, "title": "...", "artist_id": 1, "..." }],
-  "tracks":  [{ "id": 1, "title": "...", "album_id": 1, "..." }],
-  "playlists": [...]
-}
-```
+- ✅ `GET /api/v1/sync/full` — retorna todos los artistas/albums/tracks/playlists
+- ✅ `GET /api/v1/sync/changes?since=<epoch_ms>` — filtra por `updated_at`
+- ✅ Header `X-Since` con timestamp epoch_ms (no ISO8601 — corregido)
+- ✅ Response shape con `server_time`, `has_more`, todas las 5 listas
+
+**Tests cliente** (`mm-mobile/shared/src/jvmTest`): SyncCoordinatorTest
+verifica que el cliente envía el header correcto y persiste `serverTime`
+para el siguiente delta.
 
 ### Streaming de audio
 

@@ -1,0 +1,56 @@
+-- Sync queries (Phase 1.1)
+-- Upserts by PK; deletes based on server `removed` payload (NOT YET — to be added
+-- when backend supports tombstones in /api/v1/sync/changes).
+
+upsertArtist:
+INSERT OR REPLACE INTO artist(id, name, album_count, track_count, cover_url, synced_at)
+VALUES (?, ?, ?, ?, ?, ?);
+
+upsertAlbum:
+INSERT OR REPLACE INTO album(id, title, artist_id, artist_name, year, track_count, duration_ms, cover_url, cover_path, is_downloaded, synced_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+upsertTrack:
+INSERT OR REPLACE INTO track(id, title, album_id, album_title, artist_id, artist_name, duration_ms, track_number, bitrate, codec, stream_url, local_path, download_state, synced_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+upsertPlaylist:
+INSERT OR REPLACE INTO playlist(id, name, description, track_count, cover_url, is_smart, is_m3u_imported, updated_at, synced_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+upsertPlaylistTrack:
+INSERT OR REPLACE INTO playlist_track(playlist_id, track_id, position, added_at)
+VALUES (?, ?, ?, ?);
+
+selectAllArtists:
+SELECT * FROM artist ORDER BY name COLLATE NOCASE;
+
+selectAlbumsByArtist:
+SELECT * FROM album WHERE artist_id = ? ORDER BY year DESC, title COLLATE NOCASE;
+
+selectTracksByAlbum:
+SELECT * FROM track WHERE album_id = ? ORDER BY track_number ASC, title COLLATE NOCASE;
+
+selectAllPlaylists:
+SELECT * FROM playlist ORDER BY name COLLATE NOCASE;
+
+selectTracksByPlaylist:
+SELECT t.* FROM track t
+INNER JOIN playlist_track pt ON pt.track_id = t.id
+WHERE pt.playlist_id = ?
+ORDER BY pt.position ASC;
+
+deleteAllArtists:
+DELETE FROM artist;
+
+deleteAllAlbums:
+DELETE FROM album;
+
+deleteAllTracks:
+DELETE FROM track;
+
+deleteAllPlaylists:
+DELETE FROM playlist;
+
+deleteAllPlaylistTracks:
+DELETE FROM playlist_track;
