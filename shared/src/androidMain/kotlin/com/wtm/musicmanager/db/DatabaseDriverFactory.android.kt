@@ -5,17 +5,24 @@ import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import app.cash.sqldelight.db.SqlDriver
 
 /**
- * Android implementation: SQLite via AndroidSqliteDriver (bundled native,
- * zero extra dependencies beyond what SQLDelight already pulls).
+ * Android actual. The driver is constructed on first access and cached.
+ * Needs a [Context] (preferably the Application context, which lives for
+ * the process lifetime), so the [androidDriver] initializer is public —
+ * `MusicManagerApp.onCreate()` calls [initAndroidDriver] before any
+ * Hilt-injected singleton asks the DB module for a driver.
+ *
+ * For Hilt-aware injection, prefer [createDriver] — the Hilt module in
+ * `android/.../di/LibraryModule.kt` uses @ApplicationContext to wire
+ * the driver directly, which avoids the lateinit/null trap of having
+ * the driver in a top-level `var`.
  */
-actual fun createDriver(): SqlDriver {
-    // The actual Application context is supplied via initAndroidDriver(),
-    // called from MusicManagerApp.onCreate(). createDriver() throws if it
-    // runs before init. This keeps the expect/actual factory platform-pure.
-    return androidDriver!!
-}
-
 private var androidDriver: SqlDriver? = null
+
+actual fun createDriver(): SqlDriver =
+    androidDriver ?: error(
+        "AndroidSqliteDriver not initialized — call DatabaseDriverFactory.initAndroidDriver(context) " +
+            "in Application.onCreate() before any DB access."
+    )
 
 fun initAndroidDriver(context: Context) {
     if (androidDriver == null) {

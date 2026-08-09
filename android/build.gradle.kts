@@ -94,6 +94,7 @@ dependencies {
     implementation(libs.ktor.client.logging)
     implementation(libs.kotlinx.datetime)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.sqldelight.android.driver)
 
     // Media
     implementation(libs.media3.exoplayer)

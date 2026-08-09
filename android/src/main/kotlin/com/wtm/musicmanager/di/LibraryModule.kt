@@ -1,16 +1,19 @@
 package com.wtm.musicmanager.di
 
+import android.content.Context
+import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import com.wtm.musicmanager.data.LibraryRepository
 import com.wtm.musicmanager.data.SqlDelightLibraryRepository
+import com.wtm.musicmanager.data.SyncCoordinator
 import com.wtm.musicmanager.data.SyncUpsertQueries
 import com.wtm.musicmanager.db.MusicManagerDatabase
-import com.wtm.musicmanager.db.createDriver
 import com.wtm.musicmanager.network.AuthStorage
 import com.wtm.musicmanager.network.AuthStorageFactory
 import com.wtm.musicmanager.network.MusicManagerApi
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
+import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
@@ -38,8 +41,16 @@ object LibraryModule {
 
     @Provides
     @Singleton
-    fun provideDatabase(): MusicManagerDatabase =
-        MusicManagerDatabase(createDriver())
+    fun provideDatabase(
+        @ApplicationContext context: Context,
+    ): MusicManagerDatabase {
+        val driver = AndroidSqliteDriver(
+            schema = MusicManagerDatabase.Schema,
+            context = context,
+            name = "musicmanager.db",
+        )
+        return MusicManagerDatabase(driver)
+    }
 
     @Provides
     @Singleton
@@ -66,4 +77,11 @@ object LibraryModule {
         client: HttpClient,
         authStorage: AuthStorage,
     ): MusicManagerApi = MusicManagerApi(client, DEFAULT_BASE_URL, authStorage)
+
+    @Provides
+    @Singleton
+    fun provideSyncCoordinator(
+        api: MusicManagerApi,
+        queries: SyncUpsertQueries,
+    ): SyncCoordinator = SyncCoordinator(api, queries)
 }
