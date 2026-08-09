@@ -40,6 +40,27 @@ INNER JOIN playlist_track pt ON pt.track_id = t.id
 WHERE pt.playlist_id = ?
 ORDER BY pt.position ASC;
 
+-- Phase 2: track-level queries for LibraryScreen
+selectAllTracks:
+SELECT * FROM track ORDER BY title COLLATE NOCASE;
+
+selectTracksByArtist:
+SELECT * FROM track WHERE artist_id = ? ORDER BY album_id, track_number, title COLLATE NOCASE;
+
+searchTracks:
+SELECT * FROM track
+WHERE title LIKE ? OR album_title LIKE ? OR artist_name LIKE ?
+ORDER BY title COLLATE NOCASE;
+
+selectTrackCount:
+SELECT COUNT(*) FROM track;
+
+selectArtistById:
+SELECT * FROM artist WHERE id = ?;
+
+selectAlbumById:
+SELECT * FROM album WHERE id = ?;
+
 deleteAllArtists:
 DELETE FROM artist;
 
