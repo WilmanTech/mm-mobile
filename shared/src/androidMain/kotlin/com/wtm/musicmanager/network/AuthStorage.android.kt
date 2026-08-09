@@ -26,25 +26,20 @@ actual class AuthStorage(context: Context) {
 
     actual fun loadToken(): String? = prefs.getString(KEY_TOKEN, null)
 
-    actual fun saveToken(token: String, serverLabel: String?) {
+    actual fun saveToken(token: String) {
         prefs.edit()
             .putString(KEY_TOKEN, token)
-            .apply {
-                if (serverLabel != null) putString(KEY_SERVER_LABEL, serverLabel)
-            }
             .apply()
     }
 
     actual fun clearToken() {
         prefs.edit()
             .remove(KEY_TOKEN)
-            .remove(KEY_SERVER_LABEL)
             .apply()
     }
 
     private companion object {
         const val PREFS_NAME = "musicmanager_secure_prefs"
         const val KEY_TOKEN = "pairing_token"
-        const val KEY_SERVER_LABEL = "server_label"
     }
 }

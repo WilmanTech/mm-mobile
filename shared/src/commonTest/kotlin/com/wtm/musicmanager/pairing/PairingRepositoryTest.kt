@@ -1,11 +1,15 @@
 package com.wtm.musicmanager.pairing
 
-import com.wtm.musicmanager.network.ConfirmPairingRequest
+import app.cash.turbine.test
 import com.wtm.musicmanager.network.MusicManagerApi
+import com.wtm.musicmanager.network.PairingConfirmRequest
+import com.wtm.musicmanager.network.PairingConfirmResponse
+import com.wtm.musicmanager.network.PairingStartRequest
+import com.wtm.musicmanager.network.PairingStartResponse
 import com.wtm.musicmanager.network.PairingStatusResponse
-import com.wtm.musicmanager.network.StartPairingRequest
-import com.wtm.musicmanager.network.StartPairingResponse
+import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.MockRequestHandler
 import io.ktor.client.engine.mock.respond
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.defaultRequest
@@ -14,10 +18,8 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
-import io.ktor.client.HttpClient
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
-import app.cash.turbine.test
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -32,14 +34,12 @@ class PairingRepositoryTest {
         isLenient = true
     }
 
-    /**
-     * Minimal HttpClient backed by MockEngine. The test installs a per-test
-     * `addHandler { request -> ... }` to control what each endpoint returns.
-     */
-    private fun mockClient(handler: io.ktor.client.engine.mock.MockRequestHandler): HttpClient {
+    private fun mockClient(handler: MockRequestHandler): HttpClient {
         val engine = MockEngine(handler)
         return HttpClient(engine) {
-            install(ContentNegotiation) { json(this@PairingRepositoryTest.json()) }
+            install(ContentNegotiation) {
+                json(this@PairingRepositoryTest.json())
+            }
             defaultRequest {
                 headers.append(HttpHeaders.ContentType, ContentType.Application.Json.toString())
             }
@@ -48,14 +48,15 @@ class PairingRepositoryTest {
 
     private fun startHandler(
         sessionId: String = "sess-1",
+        token: String = "tok-xyz",
         code: String = "blue-fox-quick-zest",
-        expiresAt: Long? = fakeNow + 300_000L,
-    ): io.ktor.client.engine.mock.MockRequestHandler = { request ->
+        expiresIn: Int = 300,
+    ): MockRequestHandler = { request ->
         if (request.url.encodedPath.endsWith("/api/pairing/start")) {
             respond(
                 content = json().encodeToString(
-                    StartPairingResponse.serializer(),
-                    StartPairingResponse(sessionId, code, expiresAt),
+                    PairingStartResponse.serializer(),
+                    PairingStartResponse(sessionId, token, code, expiresIn),
                 ),
                 status = HttpStatusCode.OK,
                 headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
@@ -66,7 +67,7 @@ class PairingRepositoryTest {
     }
 
     @Test
-    fun `start transitions from Idle to Pending`() = runTest {
+    fun `start transitions from Idle to Pending and persists token immediately`() = runTest {
         val authStorage = InMemoryTokenStore()
         val api = MusicManagerApi(mockClient(startHandler()), baseUrl = "http://test")
         val repo = PairingRepository(api, authStorage, now = { fakeNow })
@@ -76,45 +77,49 @@ class PairingRepositoryTest {
 
             val state = repo.start()
             assertTrue(state is PairingState.Pending)
-            assertEquals("sess-1", state.sessionId)
-            assertEquals("blue-fox-quick-zest", state.code)
-            assertEquals(fakeNow, state.startedAt)
+            val pending = state as PairingState.Pending
+            assertEquals("sess-1", pending.sessionId)
+            assertEquals("tok-xyz", pending.token)
+            assertEquals("blue-fox-quick-zest", pending.code)
+            assertEquals(fakeNow, pending.startedAt)
+            assertEquals(fakeNow + 300_000L, pending.expiresAt)
 
-            // State should also reflect the transition
             assertEquals(state, awaitItem())
         }
+        // Token was persisted eagerly so a backend restart mid-pairing
+        // doesn't lose it.
+        assertEquals("tok-xyz", authStorage.load())
     }
 
     @Test
-    fun `refreshStatus transitions to Paired and persists token`() = runTest {
+    fun `refreshStatus transitions to Paired when server confirms`() = runTest {
         val authStorage = InMemoryTokenStore()
-        val handler: io.ktor.client.engine.mock.MockRequestHandler = { request ->
+        val handler: MockRequestHandler = { request ->
             when {
-                request.url.encodedPath.endsWith("/api/pairing/start") -> {
+                request.url.encodedPath.endsWith("/api/pairing/start") ->
                     respond(
-                        content = json().encodeToString(
-                            StartPairingResponse.serializer(),
-                            StartPairingResponse("sess-2", "river-stone", null),
+                        json().encodeToString(
+                            PairingStartResponse.serializer(),
+                            PairingStartResponse("sess-2", "tok-xyz", "river-stone", 300),
                         ),
-                        status = HttpStatusCode.OK,
-                        headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+                        HttpStatusCode.OK,
+                        headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
                     )
-                }
-                request.url.encodedPath.endsWith("/api/pairing/status") -> {
+                request.url.encodedPath.endsWith("/api/pairing/status") ->
                     respond(
-                        content = json().encodeToString(
+                        json().encodeToString(
                             PairingStatusResponse.serializer(),
                             PairingStatusResponse(
-                                status = "paired",
-                                apiToken = "tok-xyz",
+                                exists = true,
+                                sessionId = "sess-2",
+                                confirmed = true,
                                 deviceName = "Mac Studio",
-                                serverLabel = "Home Server",
+                                confirmedAt = 1_700_000_005.0,
                             ),
                         ),
-                        status = HttpStatusCode.OK,
-                        headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+                        HttpStatusCode.OK,
+                        headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
                     )
-                }
                 else -> respond("not found", HttpStatusCode.NotFound)
             }
         }
@@ -125,40 +130,42 @@ class PairingRepositoryTest {
         val paired = repo.refreshStatus("sess-2")
 
         assertTrue(paired is PairingState.Paired)
-        assertEquals("tok-xyz", paired.token)
-        assertEquals("Mac Studio", paired.deviceName)
-        assertEquals("Home Server", paired.serverLabel)
-        assertEquals(fakeNow, paired.pairedAt)
-
-        // Token must be persisted to AuthStorage.
+        val p = paired as PairingState.Paired
+        assertEquals("tok-xyz", p.token)
+        assertEquals("Mac Studio", p.deviceName)
+        assertEquals(1_700_000_005_000L, p.pairedAt)
         assertEquals("tok-xyz", authStorage.load())
     }
 
     @Test
-    fun `refreshStatus stays in Pending when server returns pending`() = runTest {
+    fun `refreshStatus stays in Pending when server is still pending`() = runTest {
         val authStorage = InMemoryTokenStore()
-        val handler: io.ktor.client.engine.mock.MockRequestHandler = { request ->
+        val handler: MockRequestHandler = { request ->
             when {
-                request.url.encodedPath.endsWith("/api/pairing/start") -> {
+                request.url.encodedPath.endsWith("/api/pairing/start") ->
                     respond(
-                        content = json().encodeToString(
-                            StartPairingResponse.serializer(),
-                            StartPairingResponse("sess-3", "rock-stone", null),
+                        json().encodeToString(
+                            PairingStartResponse.serializer(),
+                            PairingStartResponse("sess-3", "tok-3", "rock-stone", 300),
                         ),
-                        status = HttpStatusCode.OK,
-                        headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+                        HttpStatusCode.OK,
+                        headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
                     )
-                }
-                request.url.encodedPath.endsWith("/api/pairing/status") -> {
+                request.url.encodedPath.endsWith("/api/pairing/status") ->
                     respond(
-                        content = json().encodeToString(
+                        json().encodeToString(
                             PairingStatusResponse.serializer(),
-                            PairingStatusResponse(status = "pending"),
+                            PairingStatusResponse(
+                                exists = true,
+                                sessionId = "sess-3",
+                                confirmed = false,
+                                expired = false,
+                                revoked = false,
+                            ),
                         ),
-                        status = HttpStatusCode.OK,
-                        headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+                        HttpStatusCode.OK,
+                        headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
                     )
-                }
                 else -> respond("not found", HttpStatusCode.NotFound)
             }
         }
@@ -168,35 +175,38 @@ class PairingRepositoryTest {
         repo.start()
         val state = repo.refreshStatus("sess-3")
         assertTrue(state is PairingState.Pending)
-        assertEquals("sess-3", state.sessionId)
-        assertNull(authStorage.load())
+        assertEquals("sess-3", (state as PairingState.Pending).sessionId)
     }
 
     @Test
-    fun `refreshStatus transitions to Expired`() = runTest {
+    fun `refreshStatus transitions to Expired when server returns expired=true`() = runTest {
         val authStorage = InMemoryTokenStore()
-        val handler: io.ktor.client.engine.mock.MockRequestHandler = { request ->
+        val handler: MockRequestHandler = { request ->
             when {
-                request.url.encodedPath.endsWith("/api/pairing/start") -> {
+                request.url.encodedPath.endsWith("/api/pairing/start") ->
                     respond(
-                        content = json().encodeToString(
-                            StartPairingResponse.serializer(),
-                            StartPairingResponse("sess-4", "old-code", null),
+                        json().encodeToString(
+                            PairingStartResponse.serializer(),
+                            PairingStartResponse("sess-4", "tok-4", "old-code", 300),
                         ),
-                        status = HttpStatusCode.OK,
-                        headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+                        HttpStatusCode.OK,
+                        headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
                     )
-                }
-                request.url.encodedPath.endsWith("/api/pairing/status") -> {
+                request.url.encodedPath.endsWith("/api/pairing/status") ->
                     respond(
-                        content = json().encodeToString(
+                        json().encodeToString(
                             PairingStatusResponse.serializer(),
-                            PairingStatusResponse(status = "expired"),
+                            PairingStatusResponse(
+                                exists = true,
+                                sessionId = "sess-4",
+                                confirmed = false,
+                                expired = true,
+                                revoked = false,
+                            ),
                         ),
-                        status = HttpStatusCode.OK,
-                        headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+                        HttpStatusCode.OK,
+                        headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
                     )
-                }
                 else -> respond("not found", HttpStatusCode.NotFound)
             }
         }
@@ -206,13 +216,44 @@ class PairingRepositoryTest {
         repo.start()
         val state = repo.refreshStatus("sess-4")
         assertTrue(state is PairingState.Expired)
-        assertEquals("sess-4", state.sessionId)
+        assertEquals("sess-4", (state as PairingState.Expired).sessionId)
+    }
+
+    @Test
+    fun `refreshStatus transitions to Expired when exists=false`() = runTest {
+        val authStorage = InMemoryTokenStore()
+        val handler: MockRequestHandler = { request ->
+            when {
+                request.url.encodedPath.endsWith("/api/pairing/start") ->
+                    respond(
+                        json().encodeToString(
+                            PairingStartResponse.serializer(),
+                            PairingStartResponse("sess-5", "tok-5", "ghost-code", 300),
+                        ),
+                        HttpStatusCode.OK,
+                        headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+                    )
+                request.url.encodedPath.endsWith("/api/pairing/status") ->
+                    respond(
+                        """{"exists":false}""",
+                        HttpStatusCode.OK,
+                        headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+                    )
+                else -> respond("not found", HttpStatusCode.NotFound)
+            }
+        }
+        val api = MusicManagerApi(mockClient(handler), baseUrl = "http://test")
+        val repo = PairingRepository(api, authStorage, now = { fakeNow })
+
+        repo.start()
+        val state = repo.refreshStatus("sess-5")
+        assertTrue(state is PairingState.Expired)
     }
 
     @Test
     fun `refreshStatus on Idle is a no-op`() = runTest {
         val authStorage = InMemoryTokenStore()
-        val handler: io.ktor.client.engine.mock.MockRequestHandler = {
+        val handler: MockRequestHandler = {
             respond("not found", HttpStatusCode.NotFound)
         }
         val api = MusicManagerApi(mockClient(handler), baseUrl = "http://test")
@@ -231,7 +272,6 @@ class PairingRepositoryTest {
         repo.state.test {
             assertEquals(PairingState.Idle, awaitItem())
 
-            // First go to Pending so unpair() is a real state change.
             repo.start()
             assertTrue(awaitItem() is PairingState.Pending)
 
@@ -244,53 +284,92 @@ class PairingRepositoryTest {
     }
 
     @Test
-    fun `confirm success transitions to Paired`() = runTest {
+    fun `confirm success transitions to Paired using the confirm response token`() = runTest {
         val authStorage = InMemoryTokenStore()
-        val handler: io.ktor.client.engine.mock.MockRequestHandler = { request ->
+        val handler: MockRequestHandler = { request ->
             when {
-                request.url.encodedPath.endsWith("/api/pairing/confirm") -> {
-                    respond("", HttpStatusCode.OK)
-                }
-                request.url.encodedPath.endsWith("/api/pairing/status") -> {
+                request.url.encodedPath.endsWith("/api/pairing/confirm") ->
                     respond(
                         content = json().encodeToString(
-                            PairingStatusResponse.serializer(),
-                            PairingStatusResponse(
-                                status = "paired",
-                                apiToken = "tok-confirm",
+                            PairingConfirmResponse.serializer(),
+                            PairingConfirmResponse(
+                                status = "confirmed",
+                                token = "tok-confirm",
                                 deviceName = "My iPhone",
-                                serverLabel = "Workstation",
+                                pairedAt = 1_700_000_010.0,
                             ),
                         ),
                         status = HttpStatusCode.OK,
                         headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
                     )
-                }
+                request.url.encodedPath.endsWith("/api/pairing/status") ->
+                    respond(
+                        content = json().encodeToString(
+                            PairingStatusResponse.serializer(),
+                            PairingStatusResponse(
+                                exists = true,
+                                sessionId = "sess-c",
+                                confirmed = true,
+                                deviceName = "My iPhone",
+                                confirmedAt = 1_700_000_010.0,
+                            ),
+                        ),
+                        status = HttpStatusCode.OK,
+                        headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+                    )
                 else -> respond("not found", HttpStatusCode.NotFound)
             }
         }
         val api = MusicManagerApi(mockClient(handler), baseUrl = "http://test")
         val repo = PairingRepository(api, authStorage, now = { fakeNow })
 
-        val state = repo.confirm("sess-c", "my-code", "My iPhone")
+        val state = repo.confirm("sess-c", "my-code", "My iPhone", "mobile")
         assertTrue(state is PairingState.Paired)
-        assertEquals("tok-confirm", state.token)
+        val p = state as PairingState.Paired
+        assertEquals("tok-confirm", p.token)
+        assertEquals("My iPhone", p.deviceName)
         assertEquals("tok-confirm", authStorage.load())
+    }
+
+    @Test
+    fun `start accepts optional deviceType`() = runTest {
+        val authStorage = InMemoryTokenStore()
+        val handler: MockRequestHandler = { request ->
+            if (request.url.encodedPath.endsWith("/api/pairing/start")) {
+                respond(
+                    json().encodeToString(
+                        PairingStartResponse.serializer(),
+                        PairingStartResponse("sess-x", "tok-x", "code", 300),
+                    ),
+                    HttpStatusCode.OK,
+                    headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+                )
+            } else {
+                respond("not found", HttpStatusCode.NotFound)
+            }
+        }
+        val api = MusicManagerApi(mockClient(handler), baseUrl = "http://test")
+        val repo = PairingRepository(api, authStorage, now = { fakeNow })
+
+        // The request body shape is exercised by MusicManagerApiTest's
+        // contract test (the actual JSON serializer is what produces it).
+        // Here we just assert the call doesn't blow up when deviceType is
+        // set, and that Pending carries the expected session/code/token.
+        val state = repo.start(deviceType = "tv")
+        assertTrue(state is PairingState.Pending)
+        assertEquals("tok-x", (state as PairingState.Pending).token)
     }
 }
 
 /** In-memory TokenStore for tests. */
 private class InMemoryTokenStore : TokenStore {
     var token: String? = null
-    var label: String? = null
 
     override fun load(): String? = token
-    override fun save(token: String, serverLabel: String?) {
+    override fun save(token: String) {
         this.token = token
-        this.label = serverLabel
     }
     override fun clear() {
         token = null
-        label = null
     }
 }

@@ -21,14 +21,13 @@ actual class AuthStorage(storageDir: File = File(System.getProperty("user.home")
         return props.getProperty("token")
     }
 
-    actual fun saveToken(token: String, serverLabel: String?) {
+    actual fun saveToken(token: String) {
         file.parentFile.mkdirs()
         val props = Properties()
         if (file.exists()) {
             file.inputStream().use { props.load(it) }
         }
         props.setProperty("token", token)
-        if (serverLabel != null) props.setProperty("server_label", serverLabel)
         file.outputStream().use { props.store(it, null) }
     }
 

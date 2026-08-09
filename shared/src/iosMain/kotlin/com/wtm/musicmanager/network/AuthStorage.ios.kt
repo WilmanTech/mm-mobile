@@ -17,20 +17,15 @@ actual class AuthStorage {
 
     actual fun loadToken(): String? = defaults.stringForKey(KEY_TOKEN)
 
-    actual fun saveToken(token: String, serverLabel: String?) {
+    actual fun saveToken(token: String) {
         defaults.setObject(token, forKey = KEY_TOKEN)
-        if (serverLabel != null) {
-            defaults.setObject(serverLabel, forKey = KEY_SERVER_LABEL)
-        }
     }
 
     actual fun clearToken() {
         defaults.removeObjectForKey(KEY_TOKEN)
-        defaults.removeObjectForKey(KEY_SERVER_LABEL)
     }
 
     private companion object {
         const val KEY_TOKEN = "pairing_token"
-        const val KEY_SERVER_LABEL = "server_label"
     }
 }

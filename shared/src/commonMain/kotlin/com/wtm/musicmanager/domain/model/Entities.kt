@@ -3,8 +3,12 @@ package com.wtm.musicmanager.domain.model
 import kotlinx.serialization.Serializable
 
 /**
- * Core domain entities shared across platforms. Mirrors MusicManager backend's
- * `/api/library/...` payloads with snake_case JSON via kotlinx.serialization.
+ * Core domain entities shared across platforms. Sourced from the
+ * `/api/v1/sync/{full,changes}` payloads.
+ *
+ * `updatedAt` is an ISO 8601 string ('YYYY-MM-DDTHH:MM:SSZ') emitted by
+ * the backend's `_row_to_iso` reformatting of SQLite's naive timestamps.
+ * Use `parseIso8601()` to compare it against the local sync cursor.
  *
  * Persistence schema lives in `sqldelight/` — these are the *wire* models.
  * Repository layer maps between them.
@@ -14,9 +18,9 @@ import kotlinx.serialization.Serializable
 data class Artist(
     val id: Long,
     val name: String,
-    val albumCount: Int = 0,
-    val trackCount: Int = 0,
-    val coverUrl: String? = null,
+    val musicbrainzId: String? = null,
+    val imagePath: String? = null,
+    val updatedAt: String? = null,
 )
 
 @Serializable
@@ -24,13 +28,14 @@ data class Album(
     val id: Long,
     val title: String,
     val artistId: Long,
-    val artistName: String,
     val year: Int? = null,
-    val trackCount: Int = 0,
-    val durationMs: Long? = null,
-    val coverUrl: String? = null,
-    val coverPath: String? = null, // local cache path when downloaded
-    val isDownloaded: Boolean = false,
+    val genre: String? = null,
+    val coverPath: String? = null,
+    val musicbrainzId: String? = null,
+    val folderPath: String? = null,
+    val updatedAt: String? = null,
+    /** Set when the cover art has been downloaded to local cache. */
+    val isCoverCached: Boolean = false,
 )
 
 @Serializable
@@ -38,14 +43,19 @@ data class Track(
     val id: Long,
     val title: String,
     val albumId: Long,
-    val albumTitle: String,
     val artistId: Long,
-    val artistName: String,
-    val durationMs: Long,
+    val discNumber: Int? = null,
     val trackNumber: Int? = null,
+    val durationMs: Long? = null,
     val bitrate: Int? = null,
     val codec: String? = null,
-    val streamUrl: String? = null, // signed/authorized URL from backend
+    val acoustId: String? = null,
+    val musicbrainzId: String? = null,
+    val playCount: Int = 0,
+    val isFavorite: Boolean = false,
+    val isLive: Boolean = false,
+    val addedAt: String? = null,
+    val updatedAt: String? = null,
     val localPath: String? = null, // populated when downloaded
     val downloadState: DownloadState = DownloadState.NotDownloaded,
 )
@@ -64,9 +74,17 @@ data class Playlist(
     val id: Long,
     val name: String,
     val description: String? = null,
-    val trackCount: Int = 0,
-    val coverUrl: String? = null,
     val isSmart: Boolean = false,
+    val rules: String? = null,
+    val m3uPath: String? = null,
     val isM3uImported: Boolean = false,
-    val updatedAt: Long? = null, // epoch ms — used for sync deltas
+    val updatedAt: String? = null,
+)
+
+@Serializable
+data class PlaylistTrack(
+    val playlistId: Long,
+    val trackId: Long,
+    val position: Int,
+    val addedAt: String? = null,
 )

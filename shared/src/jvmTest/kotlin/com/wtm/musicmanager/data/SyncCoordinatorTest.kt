@@ -2,11 +2,11 @@ package com.wtm.musicmanager.data
 
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
-import app.cash.sqldelight.db.SqlPreparedStatement
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.wtm.musicmanager.domain.model.Album
 import com.wtm.musicmanager.domain.model.Artist
 import com.wtm.musicmanager.domain.model.Playlist
+import com.wtm.musicmanager.domain.model.PlaylistTrack
 import com.wtm.musicmanager.domain.model.Track
 import com.wtm.musicmanager.network.MusicManagerApi
 import io.ktor.client.HttpClient
@@ -39,10 +39,10 @@ class SyncCoordinatorTest {
             CREATE TABLE artist (
                 id INTEGER PRIMARY KEY,
                 name TEXT NOT NULL,
-                album_count INTEGER NOT NULL DEFAULT 0,
-                track_count INTEGER NOT NULL DEFAULT 0,
-                cover_url TEXT,
-                synced_at INTEGER NOT NULL
+                musicbrainz_id TEXT,
+                image_path TEXT,
+                updated_at TEXT,
+                synced_at TEXT NOT NULL
             )
             """.trimIndent(),
             """
@@ -50,14 +50,13 @@ class SyncCoordinatorTest {
                 id INTEGER PRIMARY KEY,
                 title TEXT NOT NULL,
                 artist_id INTEGER NOT NULL,
-                artist_name TEXT NOT NULL,
                 year INTEGER,
-                track_count INTEGER NOT NULL DEFAULT 0,
-                duration_ms INTEGER,
-                cover_url TEXT,
+                genre TEXT,
                 cover_path TEXT,
-                is_downloaded INTEGER NOT NULL DEFAULT 0,
-                synced_at INTEGER NOT NULL
+                musicbrainz_id TEXT,
+                folder_path TEXT,
+                updated_at TEXT,
+                synced_at TEXT NOT NULL
             )
             """.trimIndent(),
             """
@@ -65,17 +64,22 @@ class SyncCoordinatorTest {
                 id INTEGER PRIMARY KEY,
                 title TEXT NOT NULL,
                 album_id INTEGER NOT NULL,
-                album_title TEXT NOT NULL,
                 artist_id INTEGER NOT NULL,
-                artist_name TEXT NOT NULL,
-                duration_ms INTEGER NOT NULL,
+                disc_number INTEGER,
                 track_number INTEGER,
+                duration_ms INTEGER,
                 bitrate INTEGER,
                 codec TEXT,
-                stream_url TEXT,
+                acoust_id TEXT,
+                musicbrainz_id TEXT,
+                play_count INTEGER NOT NULL DEFAULT 0,
+                is_favorite INTEGER NOT NULL DEFAULT 0,
+                is_live INTEGER NOT NULL DEFAULT 0,
+                added_at TEXT,
+                updated_at TEXT,
                 local_path TEXT,
                 download_state TEXT NOT NULL DEFAULT 'NotDownloaded',
-                synced_at INTEGER NOT NULL
+                synced_at TEXT NOT NULL
             )
             """.trimIndent(),
             """
@@ -83,12 +87,12 @@ class SyncCoordinatorTest {
                 id INTEGER PRIMARY KEY,
                 name TEXT NOT NULL,
                 description TEXT,
-                track_count INTEGER NOT NULL DEFAULT 0,
-                cover_url TEXT,
                 is_smart INTEGER NOT NULL DEFAULT 0,
+                rules TEXT,
+                m3u_path TEXT,
                 is_m3u_imported INTEGER NOT NULL DEFAULT 0,
-                updated_at INTEGER,
-                synced_at INTEGER NOT NULL
+                updated_at TEXT,
+                synced_at TEXT NOT NULL
             )
             """.trimIndent(),
             """
@@ -96,7 +100,7 @@ class SyncCoordinatorTest {
                 playlist_id INTEGER NOT NULL,
                 track_id INTEGER NOT NULL,
                 position INTEGER NOT NULL,
-                added_at INTEGER NOT NULL,
+                added_at TEXT,
                 PRIMARY KEY (playlist_id, track_id)
             )
             """.trimIndent(),
@@ -123,24 +127,42 @@ class SyncCoordinatorTest {
     }
 
     @Test
-    fun `syncFull upserts all five lists and stores server time`() = runTest {
+    fun `syncFull upserts all five lists and stores server time as ISO string`() = runTest {
         val payload = """
             {
-              "artists": [{"id":1,"name":"Aesop Rock","album_count":1,"track_count":1,"cover_url":null,"updated_at":100}],
-              "albums":  [{"id":10,"title":"None Shall Pass","artist_id":1,"artist_name":"Aesop Rock","year":2007,"track_count":1,"duration_ms":3600000,"cover_url":null,"updated_at":100}],
-              "tracks":  [{"id":100,"title":"None Shall Pass","album_id":10,"album_title":"None Shall Pass","artist_id":1,"artist_name":"Aesop Rock","duration_ms":210000,"track_number":1,"bitrate":320,"codec":"mp3","stream_url":null,"updated_at":100}],
-              "playlists":[{"id":1000,"name":"Best","track_count":1,"cover_url":null,"is_smart":false,"is_m3u_imported":false,"updated_at":100}],
-              "playlist_tracks":[{"playlist_id":1000,"track_id":100,"position":0,"added_at":1234}],
-              "server_time": 1700000000000
+              "server_time": "2026-08-09T12:34:56Z",
+              "artists": [
+                {"id":1,"name":"Aesop Rock","musicbrainz_id":"abc","image_path":null,
+                 "updated_at":"2026-08-09T12:00:00Z"}
+              ],
+              "albums": [
+                {"id":10,"title":"None Shall Pass","artist_id":1,"year":2007,"genre":"Hip-Hop",
+                 "cover_path":null,"musicbrainz_id":null,"folder_path":"/music/Aesop/None Shall Pass",
+                 "updated_at":"2026-08-09T12:00:00Z"}
+              ],
+              "tracks": [
+                {"id":100,"title":"None Shall Pass","album_id":10,"artist_id":1,
+                 "disc_number":1,"track_number":1,"duration_ms":210000,"bitrate":320,"codec":"mp3",
+                 "acoustid":null,"musicbrainz_id":null,"play_count":0,"is_favorite":false,
+                 "is_cover":false,"is_live":false,"added_at":"2026-01-01T00:00:00Z",
+                 "updated_at":"2026-08-09T12:00:00Z"}
+              ],
+              "playlists": [
+                {"id":1000,"name":"Best","description":null,"is_smart":false,"rules":null,
+                 "m3u_path":null,"is_m3u_imported":false,"updated_at":"2026-08-09T12:00:00Z"}
+              ],
+              "playlist_tracks": [
+                {"playlist_id":1000,"track_id":100,"position":0,"added_at":"2026-01-01T00:00:00Z"}
+              ]
             }
         """.trimIndent()
 
-        val coordinator = SyncCoordinator(mockApi(payload), queries, now = { 1700000001000L })
+        val coordinator = SyncCoordinator(mockApi(payload), queries)
         val state = coordinator.syncFull()
 
         assertTrue(state is SyncState.Completed, "expected Completed, got $state")
         assertEquals(1, (state as SyncState.Completed).tracks)
-        assertEquals(1700000000000L, coordinator.lastServerTime.value)
+        assertEquals("2026-08-09T12:34:56Z", coordinator.lastServerTime.value)
 
         assertEquals(1, queries.count("artist"))
         assertEquals(1, queries.count("album"))
@@ -152,56 +174,49 @@ class SyncCoordinatorTest {
     @Test
     fun `syncFull wipes previous rows before applying new payload`() = runTest {
         val firstPayload = """
-            {
-              "artists": [{"id":1,"name":"Old Artist","album_count":0,"track_count":0,"cover_url":null,"updated_at":100}],
-              "albums": [], "tracks": [], "playlists": [], "playlist_tracks": [],
-              "server_time": 1000
-            }
+            { "server_time": "2026-08-09T11:00:00Z",
+              "artists": [{"id":1,"name":"Old","updated_at":"2026-08-09T11:00:00Z"}],
+              "albums": [], "tracks": [], "playlists": [], "playlist_tracks": [] }
         """.trimIndent()
         val secondPayload = """
-            {
-              "artists": [{"id":2,"name":"New Artist","album_count":0,"track_count":0,"cover_url":null,"updated_at":200}],
-              "albums": [], "tracks": [], "playlists": [], "playlist_tracks": [],
-              "server_time": 2000
-            }
+            { "server_time": "2026-08-09T12:00:00Z",
+              "artists": [{"id":2,"name":"New","updated_at":"2026-08-09T12:00:00Z"}],
+              "albums": [], "tracks": [], "playlists": [], "playlist_tracks": [] }
         """.trimIndent()
 
-        val coordinator = SyncCoordinator(mockApi(firstPayload), queries, now = { 100L })
+        val coordinator = SyncCoordinator(mockApi(firstPayload), queries)
         coordinator.syncFull()
         assertEquals(1, queries.count("artist"))
 
-        val second = SyncCoordinator(mockApi(secondPayload), queries, now = { 200L })
+        val second = SyncCoordinator(mockApi(secondPayload), queries)
         second.syncFull()
 
         assertEquals(1, queries.count("artist"))
         val rows = queries.selectArtists()
-        assertEquals("New Artist", rows.first().name)
+        assertEquals("New", rows.first().name)
     }
 
     @Test
-    fun `syncChanges sends X-Since and merges without wiping`() = runTest {
+    fun `syncChanges sends since as a query param and merges without wiping`() = runTest {
         val initialPayload = """
-            {
-              "artists": [{"id":1,"name":"A","album_count":0,"track_count":0,"cover_url":null,"updated_at":100}],
-              "albums": [], "tracks": [], "playlists": [], "playlist_tracks": [],
-              "server_time": 1000
-            }
+            { "server_time": "2026-08-09T11:00:00Z",
+              "artists": [{"id":1,"name":"A","updated_at":"2026-08-09T11:00:00Z"}],
+              "albums": [], "tracks": [], "playlists": [], "playlist_tracks": [] }
         """.trimIndent()
         val deltaPayload = """
-            {
-              "artists": [{"id":2,"name":"B","album_count":0,"track_count":0,"cover_url":null,"updated_at":200}],
-              "albums": [], "tracks": [], "playlists": [], "playlist_tracks": [],
-              "server_time": 2000,
-              "has_more": false
-            }
+            { "server_time": "2026-08-09T12:00:00Z",
+              "since": "2026-08-09T11:00:00Z",
+              "artists": [{"id":2,"name":"B","updated_at":"2026-08-09T12:00:00Z"}],
+              "albums": [], "tracks": [], "playlists": [], "playlist_tracks": [] }
         """.trimIndent()
 
         val engine = MockEngine { request ->
-            val since = request.headers["X-Since"]
+            val since = request.url.parameters["since"]
             when (request.url.encodedPath) {
-                "/api/v1/sync/full" -> respond(initialPayload, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()))
+                "/api/v1/sync/full" ->
+                    respond(initialPayload, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()))
                 "/api/v1/sync/changes" -> {
-                    assertEquals("1000", since)
+                    assertEquals("2026-08-09T11:00:00Z", since)
                     respond(deltaPayload, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()))
                 }
                 else -> respond("", HttpStatusCode.NotFound)
@@ -213,25 +228,25 @@ class SyncCoordinatorTest {
             }
         }
         val api = MusicManagerApi(client, baseUrl = "http://test")
-        val coordinator = SyncCoordinator(api, queries, now = { 1L })
+        val coordinator = SyncCoordinator(api, queries)
 
         coordinator.syncFull()
         assertEquals(1, queries.count("artist"))
 
         coordinator.syncChanges()
         assertEquals(2, queries.count("artist"))
-        assertEquals(2000L, coordinator.lastServerTime.value)
+        assertEquals("2026-08-09T12:00:00Z", coordinator.lastServerTime.value)
     }
 
     @Test
     fun `syncFull handles empty payload gracefully`() = runTest {
-        val emptyPayload = """{"server_time": 1700000000000}"""
-        val coordinator = SyncCoordinator(mockApi(emptyPayload), queries, now = { 1L })
+        val emptyPayload = """{"server_time":"2026-08-09T12:34:56Z"}"""
+        val coordinator = SyncCoordinator(mockApi(emptyPayload), queries)
         val state = coordinator.syncFull()
 
         assertTrue(state is SyncState.Completed)
         assertEquals(0, (state as SyncState.Completed).artists)
-        assertEquals(1700000000000L, coordinator.lastServerTime.value)
+        assertEquals("2026-08-09T12:34:56Z", coordinator.lastServerTime.value)
     }
 }
 
@@ -243,92 +258,96 @@ private class TestSyncQueries(private val driver: SqlDriver) : SyncUpsertQueries
         synchronized(txnLock) { block() }
     }
 
-    override fun upsertArtist(artist: Artist, syncedAt: Long) {
+    override fun upsertArtist(artist: Artist, syncedAt: String) {
         driver.execute(
             null,
-            "INSERT OR REPLACE INTO artist(id, name, album_count, track_count, cover_url, synced_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO artist(id, name, musicbrainz_id, image_path, updated_at, synced_at) VALUES (?, ?, ?, ?, ?, ?)",
             6,
         ) {
             bindLong(0, artist.id)
             bindString(1, artist.name)
-            bindLong(2, artist.albumCount.toLong())
-            bindLong(3, artist.trackCount.toLong())
-            artist.coverUrl?.let { bindString(4, it) } ?: bindString(4, null)
-            bindLong(5, syncedAt)
+            artist.musicbrainzId?.let { bindString(2, it) } ?: bindString(2, null)
+            artist.imagePath?.let { bindString(3, it) } ?: bindString(3, null)
+            artist.updatedAt?.let { bindString(4, it) } ?: bindString(4, null)
+            bindString(5, syncedAt)
         }
     }
 
-    override fun upsertAlbum(album: Album, syncedAt: Long) {
+    override fun upsertAlbum(album: Album, syncedAt: String) {
         driver.execute(
             null,
-            "INSERT OR REPLACE INTO album(id, title, artist_id, artist_name, year, track_count, duration_ms, cover_url, cover_path, is_downloaded, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            11,
+            "INSERT OR REPLACE INTO album(id, title, artist_id, year, genre, cover_path, musicbrainz_id, folder_path, updated_at, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            10,
         ) {
             bindLong(0, album.id)
             bindString(1, album.title)
             bindLong(2, album.artistId)
-            bindString(3, album.artistName)
-            album.year?.let { bindLong(4, it.toLong()) } ?: bindLong(4, null)
-            bindLong(5, album.trackCount.toLong())
-            album.durationMs?.let { bindLong(6, it) } ?: bindLong(6, null)
-            album.coverUrl?.let { bindString(7, it) } ?: bindString(7, null)
-            album.coverPath?.let { bindString(8, it) } ?: bindString(8, null)
-            bindLong(9, if (album.isDownloaded) 1L else 0L)
-            bindLong(10, syncedAt)
+            album.year?.let { bindLong(3, it.toLong()) } ?: bindLong(3, null)
+            album.genre?.let { bindString(4, it) } ?: bindString(4, null)
+            album.coverPath?.let { bindString(5, it) } ?: bindString(5, null)
+            album.musicbrainzId?.let { bindString(6, it) } ?: bindString(6, null)
+            album.folderPath?.let { bindString(7, it) } ?: bindString(7, null)
+            album.updatedAt?.let { bindString(8, it) } ?: bindString(8, null)
+            bindString(9, syncedAt)
         }
     }
 
-    override fun upsertTrack(track: Track, syncedAt: Long) {
+    override fun upsertTrack(track: Track, syncedAt: String) {
         driver.execute(
             null,
-            "INSERT OR REPLACE INTO track(id, title, album_id, album_title, artist_id, artist_name, duration_ms, track_number, bitrate, codec, stream_url, local_path, download_state, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            14,
+            "INSERT OR REPLACE INTO track(id, title, album_id, artist_id, disc_number, track_number, duration_ms, bitrate, codec, acoust_id, musicbrainz_id, play_count, is_favorite, is_live, added_at, updated_at, local_path, download_state, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            19,
         ) {
             bindLong(0, track.id)
             bindString(1, track.title)
             bindLong(2, track.albumId)
-            bindString(3, track.albumTitle)
-            bindLong(4, track.artistId)
-            bindString(5, track.artistName)
-            bindLong(6, track.durationMs)
-            track.trackNumber?.let { bindLong(7, it.toLong()) } ?: bindLong(7, null)
-            track.bitrate?.let { bindLong(8, it.toLong()) } ?: bindLong(8, null)
-            track.codec?.let { bindString(9, it) } ?: bindString(9, null)
-            track.streamUrl?.let { bindString(10, it) } ?: bindString(10, null)
-            track.localPath?.let { bindString(11, it) } ?: bindString(11, null)
-            bindString(12, track.downloadState.name)
-            bindLong(13, syncedAt)
+            bindLong(3, track.artistId)
+            track.discNumber?.let { bindLong(4, it.toLong()) } ?: bindLong(4, null)
+            track.trackNumber?.let { bindLong(5, it.toLong()) } ?: bindLong(5, null)
+            track.durationMs?.let { bindLong(6, it) } ?: bindLong(6, null)
+            track.bitrate?.let { bindLong(7, it.toLong()) } ?: bindLong(7, null)
+            track.codec?.let { bindString(8, it) } ?: bindString(8, null)
+            track.acoustId?.let { bindString(9, it) } ?: bindString(9, null)
+            track.musicbrainzId?.let { bindString(10, it) } ?: bindString(10, null)
+            bindLong(11, track.playCount.toLong())
+            bindLong(12, if (track.isFavorite) 1L else 0L)
+            bindLong(13, if (track.isLive) 1L else 0L)
+            track.addedAt?.let { bindString(14, it) } ?: bindString(14, null)
+            track.updatedAt?.let { bindString(15, it) } ?: bindString(15, null)
+            track.localPath?.let { bindString(16, it) } ?: bindString(16, null)
+            bindString(17, track.downloadState.name)
+            bindString(18, syncedAt)
         }
     }
 
-    override fun upsertPlaylist(playlist: Playlist, syncedAt: Long) {
+    override fun upsertPlaylist(playlist: Playlist, syncedAt: String) {
         driver.execute(
             null,
-            "INSERT OR REPLACE INTO playlist(id, name, description, track_count, cover_url, is_smart, is_m3u_imported, updated_at, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO playlist(id, name, description, is_smart, rules, m3u_path, is_m3u_imported, updated_at, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             9,
         ) {
             bindLong(0, playlist.id)
             bindString(1, playlist.name)
             playlist.description?.let { bindString(2, it) } ?: bindString(2, null)
-            bindLong(3, playlist.trackCount.toLong())
-            playlist.coverUrl?.let { bindString(4, it) } ?: bindString(4, null)
-            bindLong(5, if (playlist.isSmart) 1L else 0L)
+            bindLong(3, if (playlist.isSmart) 1L else 0L)
+            playlist.rules?.let { bindString(4, it) } ?: bindString(4, null)
+            playlist.m3uPath?.let { bindString(5, it) } ?: bindString(5, null)
             bindLong(6, if (playlist.isM3uImported) 1L else 0L)
-            playlist.updatedAt?.let { bindLong(7, it) } ?: bindLong(7, null)
-            bindLong(8, syncedAt)
+            playlist.updatedAt?.let { bindString(7, it) } ?: bindString(7, null)
+            bindString(8, syncedAt)
         }
     }
 
-    override fun upsertPlaylistTrack(playlistId: Long, trackId: Long, position: Int, addedAt: Long) {
+    override fun upsertPlaylistTrack(playlistTrack: PlaylistTrack, syncedAt: String) {
         driver.execute(
             null,
             "INSERT OR REPLACE INTO playlist_track(playlist_id, track_id, position, added_at) VALUES (?, ?, ?, ?)",
             4,
         ) {
-            bindLong(0, playlistId)
-            bindLong(1, trackId)
-            bindLong(2, position.toLong())
-            bindLong(3, addedAt)
+            bindLong(0, playlistTrack.playlistId)
+            bindLong(1, playlistTrack.trackId)
+            bindLong(2, playlistTrack.position.toLong())
+            playlistTrack.addedAt?.let { bindString(3, it) } ?: bindString(3, null)
         }
     }
 
@@ -345,16 +364,16 @@ private class TestSyncQueries(private val driver: SqlDriver) : SyncUpsertQueries
         }, 0).value
 
     fun selectArtists(): List<Artist> =
-        driver.executeQuery(0, "SELECT id, name, album_count, track_count, cover_url FROM artist", { cursor ->
+        driver.executeQuery(0, "SELECT id, name, musicbrainz_id, image_path, updated_at FROM artist", { cursor ->
             QueryResult.Value(buildList {
                 while (cursor.next().value) {
                     add(
                         Artist(
                             id = cursor.getLong(0) ?: 0L,
                             name = cursor.getString(1) ?: "",
-                            albumCount = (cursor.getLong(2) ?: 0L).toInt(),
-                            trackCount = (cursor.getLong(3) ?: 0L).toInt(),
-                            coverUrl = cursor.getString(4),
+                            musicbrainzId = cursor.getString(2),
+                            imagePath = cursor.getString(3),
+                            updatedAt = cursor.getString(4),
                         )
                     )
                 }
