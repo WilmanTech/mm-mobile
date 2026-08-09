@@ -83,6 +83,18 @@ dependencies {
     implementation(libs.compose.material.icons)
     debugImplementation(libs.compose.ui.tooling)
 
+    // Networking — explicit so Hilt's KSP processor can resolve HttpClient
+    // types declared in the module's own DI graph (transitive deps don't
+    // always make it into the KSP classpath).
+    implementation(libs.ktor.client.core)
+    implementation(libs.ktor.client.okhttp)
+    implementation(libs.ktor.client.content.negotiation)
+    implementation(libs.ktor.serialization.kotlinx.json)
+    implementation(libs.ktor.client.auth)
+    implementation(libs.ktor.client.logging)
+    implementation(libs.kotlinx.datetime)
+    implementation(libs.kotlinx.serialization.json)
+
     // Media
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.ui)
