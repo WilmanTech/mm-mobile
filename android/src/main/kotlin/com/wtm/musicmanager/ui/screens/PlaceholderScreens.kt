@@ -16,13 +16,6 @@ fun SearchScreen() {
 }
 
 @Composable
-fun LibraryScreen() {
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text("Biblioteca", style = MaterialTheme.typography.titleLarge)
-    }
-}
-
-@Composable
 fun SettingsScreen() {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Text("Ajustes", style = MaterialTheme.typography.titleLarge)
