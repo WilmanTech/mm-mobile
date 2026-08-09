@@ -1,0 +1,197 @@
+package com.wtm.musicmanager.data
+
+import app.cash.sqldelight.db.SqlDriver
+import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import app.cash.turbine.test
+import com.wtm.musicmanager.db.MusicManagerDatabase
+import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import kotlinx.coroutines.test.runTest
+
+class SqlDelightLibraryRepositoryTest {
+
+    private lateinit var driver: SqlDriver
+    private lateinit var db: MusicManagerDatabase
+    private lateinit var repository: SqlDelightLibraryRepository
+
+    @BeforeTest
+    fun setup() {
+        driver = JdbcSqliteDriver(url = "jdbc:sqlite::memory:")
+        // Mirror the schema in 1.sqm for the tables the repo reads.
+        listOf(
+            """
+            CREATE TABLE artist (
+                id INTEGER NOT NULL PRIMARY KEY,
+                name TEXT NOT NULL,
+                album_count INTEGER NOT NULL DEFAULT 0,
+                track_count INTEGER NOT NULL DEFAULT 0,
+                cover_url TEXT,
+                synced_at INTEGER NOT NULL
+            )
+            """.trimIndent(),
+            """
+            CREATE TABLE album (
+                id INTEGER NOT NULL PRIMARY KEY,
+                title TEXT NOT NULL,
+                artist_id INTEGER NOT NULL,
+                artist_name TEXT NOT NULL DEFAULT '',
+                year INTEGER,
+                track_count INTEGER NOT NULL DEFAULT 0,
+                duration_ms INTEGER,
+                cover_url TEXT,
+                cover_path TEXT,
+                is_downloaded INTEGER NOT NULL DEFAULT 0,
+                local_size_bytes INTEGER NOT NULL DEFAULT 0,
+                synced_at INTEGER NOT NULL
+            )
+            """.trimIndent(),
+            """
+            CREATE TABLE track (
+                id INTEGER NOT NULL PRIMARY KEY,
+                title TEXT NOT NULL,
+                album_id INTEGER NOT NULL,
+                album_title TEXT NOT NULL DEFAULT '',
+                artist_id INTEGER NOT NULL,
+                artist_name TEXT NOT NULL DEFAULT '',
+                duration_ms INTEGER NOT NULL,
+                track_number INTEGER,
+                bitrate INTEGER,
+                codec TEXT,
+                stream_url TEXT,
+                local_path TEXT,
+                download_state TEXT NOT NULL DEFAULT 'NOT_DOWNLOADED',
+                local_size_bytes INTEGER NOT NULL DEFAULT 0,
+                synced_at INTEGER NOT NULL
+            )
+            """.trimIndent(),
+        ).forEach { driver.execute(null, it, 0) }
+        db = MusicManagerDatabase(driver)
+        repository = SqlDelightLibraryRepository(db)
+    }
+
+    @AfterTest
+    fun teardown() {
+        driver.close()
+    }
+
+    private fun seedTrack(
+        id: Long,
+        title: String,
+        artistId: Long,
+        artistName: String,
+        albumId: Long,
+        albumTitle: String,
+        durationMs: Long = 180_000L,
+    ) {
+        db.queriesQueries.upsertArtist(
+            id = artistId, name = artistName,
+            album_count = 1L, track_count = 1L, cover_url = null, synced_at = 1L,
+        )
+        db.queriesQueries.upsertAlbum(
+            id = albumId, title = albumTitle,
+            artist_id = artistId, artist_name = artistName, year = 2024L,
+            track_count = 1L, duration_ms = durationMs, cover_url = null,
+            cover_path = null, is_downloaded = 0L, synced_at = 1L,
+        )
+        db.queriesQueries.upsertTrack(
+            id = id, title = title, album_id = albumId, album_title = albumTitle,
+            artist_id = artistId, artist_name = artistName,
+            duration_ms = durationMs, track_number = 1L, bitrate = 320L,
+            codec = "mp3", stream_url = null, local_path = null,
+            download_state = "NotDownloaded", synced_at = 1L,
+        )
+    }
+
+    @Test
+    fun `observeAllTracks returns all tracks when no query filter`() = runTest {
+        seedTrack(1, "Bohemian Rhapsody", 1, "Queen", 1, "A Night at the Opera")
+        seedTrack(2, "Stairway to Heaven", 2, "Led Zeppelin", 2, "Led Zeppelin IV")
+
+        repository.observeTracks(LibraryQuery.Default).test {
+            val tracks = awaitItem()
+            assertEquals(2, tracks.size, "expected 2 tracks (no filter)")
+            assertEquals(
+                setOf("Bohemian Rhapsody", "Stairway to Heaven"),
+                tracks.map { it.title }.toSet(),
+            )
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `searchTracks filters by title substring (case insensitive)`() = runTest {
+        seedTrack(1, "Bohemian Rhapsody", 1, "Queen", 1, "A Night at the Opera")
+        seedTrack(2, "Stairway to Heaven", 2, "Led Zeppelin", 2, "Led Zeppelin IV")
+        seedTrack(3, "Bohemian", 3, "Artist Three", 3, "Album Three")
+
+        repository.observeTracks(LibraryQuery(search = "bohem")).test {
+            val tracks = awaitItem()
+            assertEquals(2, tracks.size)
+            assertTrue(tracks.all { it.title.contains("Bohemian") })
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `observeTracksByArtist restricts to a single artist`() = runTest {
+        seedTrack(1, "Bohemian Rhapsody", 1, "Queen", 1, "A Night at the Opera")
+        seedTrack(2, "Stairway to Heaven", 2, "Led Zeppelin", 2, "Led Zeppelin IV")
+        seedTrack(3, "We Will Rock You", 1, "Queen", 1, "A Night at the Opera")
+
+        repository.observeTracks(LibraryQuery(artistId = 1)).test {
+            val tracks = awaitItem()
+            assertEquals(2, tracks.size)
+            assertTrue(tracks.all { it.artist_id == 1L })
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `observeTrackCount reports total after upsert`() = runTest {
+        repository.observeTrackCount().test {
+            // First emission is the initial empty count, before any seed
+            assertEquals(0L, awaitItem())
+
+            seedTrack(1, "Bohemian Rhapsody", 1, "Queen", 1, "A Night at the Opera")
+            // After the first seed the table has 1 row
+            assertEquals(1L, awaitItem())
+
+            seedTrack(2, "Stairway to Heaven", 2, "Led Zeppelin", 2, "Led Zeppelin IV")
+            // After the second seed the table has 2 rows
+            assertEquals(2L, awaitItem())
+
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `artistById returns null for unknown id`() = runTest {
+        val artist = repository.artistById(999)
+        assertNull(artist)
+    }
+
+    @Test
+    fun `observeArtists returns inserted artists ordered by name (NOCASE)`() = runTest {
+        db.queriesQueries.upsertArtist(
+            id = 1, name = "Zeppelin",
+            album_count = 0L, track_count = 0L, cover_url = null, synced_at = 1L,
+        )
+        db.queriesQueries.upsertArtist(
+            id = 2, name = "abba",
+            album_count = 0L, track_count = 0L, cover_url = null, synced_at = 1L,
+        )
+
+        repository.observeArtists().test {
+            val artists = awaitItem()
+            assertEquals(2, artists.size)
+            // SQLite COLLATE NOCASE: 'abba' < 'Zeppelin' in case-insensitive order
+            assertEquals("abba", artists[0].name)
+            assertEquals("Zeppelin", artists[1].name)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+}

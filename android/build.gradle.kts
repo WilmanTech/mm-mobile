@@ -123,5 +123,8 @@ dependencies {
 
     // Test
     testImplementation(libs.junit)
+    testImplementation("org.jetbrains.kotlin:kotlin-test")
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.turbine)
     androidTestImplementation(platform(libs.compose.bom))
 }
