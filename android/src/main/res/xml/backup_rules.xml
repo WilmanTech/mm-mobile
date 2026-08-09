@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- Do NOT backup music downloads or pairing secrets -->
+    <exclude domain="external" />
+    <exclude domain="database" path="music_manager.db" />
+    <exclude domain="sharedpref" path="secure_prefs.xml" />
+</full-backup-content>

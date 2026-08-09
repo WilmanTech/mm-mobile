@@ -1,0 +1,110 @@
+-- MusicManager mobile schema (v1)
+--
+-- Offline-first: every table has a `synced_at` column for incremental sync.
+-- Local-only changes (download state, play progress, favorites) live in
+-- separate tables so they don't fight the server's authority.
+
+CREATE TABLE artist (
+    id INTEGER NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    album_count INTEGER NOT NULL DEFAULT 0,
+    track_count INTEGER NOT NULL DEFAULT 0,
+    cover_url TEXT,
+    synced_at INTEGER NOT NULL
+);
+
+CREATE TABLE album (
+    id INTEGER NOT NULL PRIMARY KEY,
+    title TEXT NOT NULL,
+    artist_id INTEGER NOT NULL REFERENCES artist(id),
+    year INTEGER,
+    track_count INTEGER NOT NULL DEFAULT 0,
+    duration_ms INTEGER,
+    cover_url TEXT,
+    -- Local: where the cached cover lives on disk
+    cover_path TEXT,
+    -- Local: when this album is fully downloaded for offline playback
+    is_downloaded INTEGER NOT NULL DEFAULT 0,
+    -- Size in bytes of all downloaded tracks for this album (for storage UI)
+    local_size_bytes INTEGER NOT NULL DEFAULT 0,
+    synced_at INTEGER NOT NULL
+);
+
+CREATE INDEX idx_album_artist ON album(artist_id);
+
+CREATE TABLE track (
+    id INTEGER NOT NULL PRIMARY KEY,
+    title TEXT NOT NULL,
+    album_id INTEGER NOT NULL REFERENCES album(id),
+    artist_id INTEGER NOT NULL REFERENCES artist(id),
+    duration_ms INTEGER NOT NULL,
+    track_number INTEGER,
+    bitrate INTEGER,
+    codec TEXT,
+    -- Local: absolute path on the device's filesystem
+    local_path TEXT,
+    download_state TEXT NOT NULL DEFAULT 'NOT_DOWNLOADED',
+    -- File size in bytes when downloaded
+    local_size_bytes INTEGER NOT NULL DEFAULT 0,
+    synced_at INTEGER NOT NULL
+);
+
+CREATE INDEX idx_track_album ON track(album_id);
+CREATE INDEX idx_track_artist ON track(artist_id);
+CREATE INDEX idx_track_download ON track(download_state);
+
+CREATE TABLE playlist (
+    id INTEGER NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    track_count INTEGER NOT NULL DEFAULT 0,
+    cover_url TEXT,
+    is_smart INTEGER NOT NULL DEFAULT 0,
+    is_m3u_imported INTEGER NOT NULL DEFAULT 0,
+    synced_at INTEGER NOT NULL
+);
+
+CREATE TABLE playlist_track (
+    playlist_id INTEGER NOT NULL REFERENCES playlist(id) ON DELETE CASCADE,
+    track_id INTEGER NOT NULL REFERENCES track(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    PRIMARY KEY (playlist_id, track_id)
+);
+
+CREATE INDEX idx_playlist_track_position ON playlist_track(playlist_id, position);
+
+-- Local-only: tracks the user has favorited. Server doesn't know about these.
+CREATE TABLE favorite (
+    track_id INTEGER NOT NULL PRIMARY KEY REFERENCES track(id) ON DELETE CASCADE,
+    added_at INTEGER NOT NULL
+);
+
+-- Local-only: download queue. Persists across app restarts.
+CREATE TABLE download_job (
+    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    track_id INTEGER NOT NULL REFERENCES track(id) ON DELETE CASCADE,
+    priority INTEGER NOT NULL DEFAULT 0,
+    state TEXT NOT NULL DEFAULT 'QUEUED',
+    progress INTEGER NOT NULL DEFAULT 0, -- 0..100
+    error TEXT,
+    created_at INTEGER NOT NULL,
+    started_at INTEGER,
+    finished_at INTEGER
+);
+
+CREATE INDEX idx_download_state ON download_job(state, priority DESC, created_at);
+
+-- Local-only: play progress. Flushed to server when online.
+CREATE TABLE play_progress (
+    track_id INTEGER NOT NULL PRIMARY KEY REFERENCES track(id) ON DELETE CASCADE,
+    position_ms INTEGER NOT NULL,
+    completed INTEGER NOT NULL DEFAULT 0, -- 1 when position >= duration * 0.9
+    updated_at INTEGER NOT NULL,
+    synced_to_server INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE sync_state (
+    resource TEXT NOT NULL PRIMARY KEY, -- 'artists', 'albums', 'tracks', 'playlists'
+    last_sync_at INTEGER NOT NULL,
+    in_progress INTEGER NOT NULL DEFAULT 0
+);

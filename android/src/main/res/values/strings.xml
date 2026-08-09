@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MusicManager</string>
+    <string name="app_tagline">Tu música, en cualquier sitio</string>
+    <string name="nav_home">Inicio</string>
+    <string name="nav_browse">Explorar</string>
+    <string name="nav_search">Buscar</string>
+    <string name="nav_library">Biblioteca</string>
+    <string name="nav_settings">Ajustes</string>
+    <string name="status_online">En línea</string>
+    <string name="status_offline">Modo offline</string>
+    <string name="status_syncing">Sincronizando…</string>
+    <string name="banner_offline">Modo offline · mostrando biblioteca local</string>
+    <string name="action_pair">Emparejar dispositivo</string>
+    <string name="action_download">Descargar</string>
+    <string name="action_downloaded">Descargado</string>
+    <string name="action_queued">En cola</string>
+</resources>
