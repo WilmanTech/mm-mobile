@@ -10,6 +10,8 @@ import com.wtm.musicmanager.db.MusicManagerDatabase
 import com.wtm.musicmanager.network.AuthStorage
 import com.wtm.musicmanager.network.AuthStorageFactory
 import com.wtm.musicmanager.network.MusicManagerApi
+import com.wtm.musicmanager.pairing.PairingRepository
+import com.wtm.musicmanager.pairing.TokenStore
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -84,4 +86,16 @@ object LibraryModule {
         api: MusicManagerApi,
         queries: SyncUpsertQueries,
     ): SyncCoordinator = SyncCoordinator(api, queries)
+
+    @Provides
+    @Singleton
+    fun provideTokenStore(authStorage: AuthStorage): TokenStore =
+        TokenStore.from(authStorage)
+
+    @Provides
+    @Singleton
+    fun providePairingRepository(
+        api: MusicManagerApi,
+        tokenStore: TokenStore,
+    ): PairingRepository = PairingRepository(api, tokenStore)
 }

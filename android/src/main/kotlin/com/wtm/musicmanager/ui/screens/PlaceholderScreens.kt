@@ -21,12 +21,3 @@ fun SettingsScreen() {
         Text("Ajustes", style = MaterialTheme.typography.titleLarge)
     }
 }
-
-@Composable
-fun PairingScreen() {
-    // Full-screen overlay shown when no server is paired. Wires up in feature/pairing.
-    // For Fase 0 we render a no-op placeholder.
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text("", style = MaterialTheme.typography.titleLarge)
-    }
-}
