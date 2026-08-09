@@ -87,6 +87,7 @@ hilt-android = { module = "com.google.dagger:hilt-android", version.ref = "hilt"
 hilt-compiler = { module = "com.google.dagger:hilt-compiler", version.ref = "hilt" }
 hilt-work = { module = "androidx.hilt:hilt-work", version = "1.2.0" }
 hilt-work-compiler = { module = "androidx.hilt:hilt-compiler", version = "1.2.0" }
+hilt-navigation-compose = { module = "androidx.hilt:hilt-navigation-compose", version = "1.2.0" }
 
 coil-compose = { module = "io.coil-kt:coil-compose", version.ref = "coil" }
 camerax-core = { module = "androidx.camera:camera-core", version.ref = "camerax" }

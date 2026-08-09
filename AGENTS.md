@@ -163,6 +163,48 @@ from a real Android process (headless Google TV AVD on Apple Silicon).
 - **Strings**: solo en inglés en código; l10n i18n en `feature/<X>/<platform>Main/res/values-<lang>/`.
 - **Tests**: Kotest BDD style (`fun \`something works\`() = ...`). Property-based para parsers/serializers.
 
+## Phase 2 — LibraryScreen end-to-end
+
+This phase wires the read-side library layer that Phase 1.1 left dangling.
+The Phase 1.1 commit delivered SyncCoordinator + the SQLDelight schema
+with upsert queries, but the UI had no way to read those tables back.
+Phase 2 closes that loop.
+
+### Added
+
+- `LibraryQuery` (search/artistId/albumId/limit/offset with `init` validation)
+- `LibraryRepository` interface (`Flow<List<Track>>`, `Flow<List<Artist>>`, point lookups)
+- `SqlDelightLibraryRepository` impl using `asFlow().mapToList(Dispatchers.IO)`
+- SQLDelight read queries in `Queries.sq`:
+  - `selectAllTracks`, `selectTracksByArtist`, `searchTracks`
+  - `selectTrackCount`, `selectArtistById`, `selectAlbumById`
+- `LibraryViewModel` (`@HiltViewModel`): debounced query (150ms) + `flatMapLatest`
+  + `combine` with artists → `LibraryUiState` (`StateFlow`)
+- `LibraryScreen` Compose: search bar + artist chips + `LazyColumn` of tracks +
+  three empty/loading states
+- `PairingScreen` real: host/port `OutlinedTextField` + start button + code
+  display + countdown timer
+- `RootViewModel` + `MusicManagerRoot` gate: shows `PairingScreen` until
+  `PairingState.Paired`, then the bottom-nav scaffold
+- Hilt graph (`LibraryModule` + `AuthStorageModule`): provides
+  `MusicManagerDatabase` / `LibraryRepository` / `SyncUpsertQueries` /
+  `MusicManagerApi` / `HttpClient` / `PairingRepository` / `TokenStore`
+- `SqlDelightSyncUpsertQueries`: production impl of the `SyncUpsertQueries`
+  facade. Maps `domain.model.*` → SQLDelight row shape, converts ISO 8601
+  serverTime → epoch-ms `Long`
+- `DatabaseDriverFactory` (`expect/actual`): Android actual wires
+  `AndroidSqliteDriver` directly from `LibraryModule` to avoid the
+  `initAndroidDriver()` race with Hilt's graph
+
+### iOS note
+
+As of Phase 2 we are **dropping the KMP shared module for the UI** and
+moving to a 100% native Swift client. The `shared/` module is retained
+for now (PairingRepository / SyncCoordinator / LibraryRepository are
+used by the Android app), but new UI work goes into a separate
+`wtm-music-ios/` Swift project. Once the iOS app has its own native
+ports of the pairing + library flows, `shared/` will be deleted.
+
 ## Gotchas
 
 - **KMP & CocoaPods**: el módulo `:shared` está configurado como framework de

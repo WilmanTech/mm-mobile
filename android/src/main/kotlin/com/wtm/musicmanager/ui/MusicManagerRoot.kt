@@ -1,7 +1,6 @@
 package com.wtm.musicmanager.ui
 
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -22,11 +21,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.wtm.musicmanager.pairing.PairingState
 import com.wtm.musicmanager.ui.screens.HomeScreen
-import com.wtm.musicmanager.ui.screens.LibraryScreen
-import com.wtm.musicmanager.ui.screens.PairingScreen
 import com.wtm.musicmanager.ui.screens.SearchScreen
 import com.wtm.musicmanager.ui.screens.SettingsScreen
+import com.wtm.musicmanager.ui.library.LibraryScreen
+import com.wtm.musicmanager.ui.pairing.PairingScreen
 
 private enum class TopLevelTab(
     val label: String,
@@ -39,7 +41,17 @@ private enum class TopLevelTab(
 }
 
 @Composable
-fun MusicManagerRoot() {
+fun MusicManagerRoot(rootViewModel: RootViewModel = hiltViewModel()) {
+    val pairingState by rootViewModel.pairingState.collectAsStateWithLifecycle()
+
+    // PairingScreen is the full-screen entry. Once the user is paired we
+    // swap to the bottom-nav scaffold. Pending pairing states still show
+    // the screen (with the code visible) so the user can complete it.
+    if (pairingState !is PairingState.Paired) {
+        PairingScreen()
+        return
+    }
+
     var tab by remember { mutableStateOf(TopLevelTab.Home) }
 
     Scaffold(
@@ -68,8 +80,4 @@ fun MusicManagerRoot() {
             }
         }
     }
-
-    // Pairing entry is modal-over-content, not part of the bottom nav.
-    // Shown when no paired server is configured.
-    PairingScreen()
 }
