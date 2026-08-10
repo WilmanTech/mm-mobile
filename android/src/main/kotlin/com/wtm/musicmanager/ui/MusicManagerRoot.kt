@@ -23,6 +23,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.wtm.musicmanager.ui.detail.AlbumDetailScreen
 import com.wtm.musicmanager.ui.detail.ArtistDetailScreen
 import com.wtm.musicmanager.ui.detail.PlaylistDetailScreen
@@ -56,7 +57,7 @@ fun MusicManagerRoot(
     nowPlayingViewModel: NowPlayingMiniViewModel = hiltViewModel(),
     downloadViewModel: DownloadViewModel = hiltViewModel(),
 ) {
-    val pairingState = rootViewModel.pairingState
+    val pairingState by rootViewModel.pairingState.collectAsStateWithLifecycle()
 
     if (pairingState !is PairingState.Paired) {
         // PairingScreen uses Hilt's default viewModel arg so we don't
