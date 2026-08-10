@@ -38,6 +38,18 @@ class MusicManagerApi(
             withBearer()
         }.body()
 
+    /**
+     * Build the absolute streaming URL for a track. Used by the
+     * download worker (Phase 3.A) and the in-app player (Phase 3.B).
+     * The backend's `/api/stream/{track_id}` endpoint serves Range
+     * requests, so the same URL works for both:
+     *  - ExoPlayer stream (no download, partial reads as user scrubs)
+     *  - WorkManager full-file download (one GET, write to disk)
+     *
+     * Phase 3.A callers: see `download/DownloadWorker.kt`.
+     */
+    fun streamUrl(trackId: Long): String = "$baseUrl/api/stream/$trackId"
+
     suspend fun startPairing(request: PairingStartRequest): PairingStartResponse =
         client.post("$baseUrl/api/pairing/start") {
             contentType(ContentType.Application.Json)
