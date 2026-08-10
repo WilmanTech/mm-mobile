@@ -54,7 +54,7 @@ import com.wtm.musicmanager.db.Track
 @Composable
 fun PlaylistDetailScreen(
     onBack: () -> Unit,
-    onTrackClick: (Long) -> Unit,
+    onTrackClick: (com.wtm.musicmanager.db.Track) -> Unit,
     modifier: Modifier = Modifier,
     viewModel: PlaylistDetailViewModel = hiltViewModel(),
 ) {
@@ -103,7 +103,7 @@ fun PlaylistDetailScreen(
 private fun PlaylistDetailContent(
     playlist: Playlist,
     tracks: List<Track>,
-    onTrackClick: (Long) -> Unit,
+    onTrackClick: (Track) -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -124,7 +124,7 @@ private fun PlaylistDetailContent(
             }
         } else {
             itemsIndexed(tracks, key = { _, t -> t.id }) { index, track ->
-                PlaylistTrackRow(position = index + 1, track = track, onClick = { onTrackClick(track.id) })
+                PlaylistTrackRow(position = index + 1, track = track, onClick = { onTrackClick(track) })
                 HorizontalDivider(
                     modifier = Modifier.padding(start = 80.dp),
                     color = MaterialTheme.colorScheme.outlineVariant,
