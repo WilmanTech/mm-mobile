@@ -2,8 +2,11 @@ package com.wtm.musicmanager.ui.library
 
 import com.wtm.musicmanager.data.LibraryQuery
 import com.wtm.musicmanager.data.LibraryRepository
+import com.wtm.musicmanager.data.SyncCoordinator
+import com.wtm.musicmanager.data.SyncState
 import com.wtm.musicmanager.db.Album
 import com.wtm.musicmanager.db.Artist
+import com.wtm.musicmanager.db.Playlist
 import com.wtm.musicmanager.db.Track
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -22,6 +25,7 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class LibraryViewModelTest {
@@ -30,6 +34,7 @@ class LibraryViewModelTest {
     private val testScope = CoroutineScope(testDispatcher + SupervisorJob())
 
     private lateinit var fakeRepository: FakeLibraryRepository
+    private lateinit var fakeSync: FakeSyncCoordinator
     private lateinit var viewModel: LibraryViewModel
     private lateinit var collectorJob: kotlinx.coroutines.Job
 
@@ -37,7 +42,8 @@ class LibraryViewModelTest {
     fun setup() {
         Dispatchers.setMain(testDispatcher)
         fakeRepository = FakeLibraryRepository()
-        viewModel = LibraryViewModel(fakeRepository)
+        fakeSync = FakeSyncCoordinator()
+        viewModel = LibraryViewModel(fakeRepository, fakeSync)
         // stateIn uses WhileSubscribed, so we need a collector for the
         // combine() chain to actually run. We launch one and cancel it
         // in teardown.
@@ -92,27 +98,59 @@ class LibraryViewModelTest {
         advanceUntilIdle()
         assertEquals(LibraryQuery.Default, viewModel.state.value.query)
     }
+
+    @Test
+    fun `onRefresh sets isRefreshing then clears it after sync`() = runTest(testDispatcher) {
+        assertFalse(viewModel.state.value.isRefreshing)
+        viewModel.onRefresh()
+        advanceUntilIdle()
+        // After the fake sync completes, isRefreshing should be back to false.
+        assertFalse(viewModel.state.value.isRefreshing)
+        assertEquals(1, fakeSync.syncChangesCallCount)
+    }
 }
 
 /**
  * Fake LibraryRepository that returns empty Flows for everything.
  * Sufficient for testing the ViewModel's state-update logic without
- * spinning up SQLDelight.
+ * spinning up SQLDelight. Phase 2.1 also implements the new
+ * observeAlbums / observePlaylists / searchArtists methods as no-ops.
  */
 private class FakeLibraryRepository : LibraryRepository {
     private val empty = MutableStateFlow<List<Track>>(emptyList())
     private val emptyArtists = MutableStateFlow<List<Artist>>(emptyList())
 
-    override fun observeTracks(query: LibraryQuery): Flow<List<Track>> =
-        empty.asStateFlow()
-
+    override fun observeTracks(query: LibraryQuery): Flow<List<Track>> = empty.asStateFlow()
     override fun observeArtists(): Flow<List<Artist>> = emptyArtists.asStateFlow()
     override fun observeAlbumsByArtist(artistId: Long): Flow<List<Album>> =
         MutableStateFlow<List<Album>>(emptyList()).asStateFlow()
-    override fun observeTrackCount(): Flow<Long> =
-        MutableStateFlow(0L).asStateFlow()
+    override fun observeTrackCount(): Flow<Long> = MutableStateFlow(0L).asStateFlow()
+
+    override fun observeAlbums(query: LibraryQuery): Flow<List<Album>> =
+        MutableStateFlow<List<Album>>(emptyList()).asStateFlow()
+    override fun observePlaylists(query: LibraryQuery): Flow<List<Playlist>> =
+        MutableStateFlow<List<Playlist>>(emptyList()).asStateFlow()
+    override fun searchArtists(query: String): Flow<List<Artist>> =
+        MutableStateFlow<List<Artist>>(emptyList()).asStateFlow()
 
     override suspend fun trackById(id: Long): Track? = null
     override suspend fun artistById(id: Long): Artist? = null
     override suspend fun albumById(id: Long): Album? = null
+}
+
+private class FakeSyncCoordinator : SyncCoordinator(
+    api = throw NotImplementedError("FakeSyncCoordinator doesn't expose api"),
+    upsertQueries = throw NotImplementedError("FakeSyncCoordinator doesn't expose queries"),
+) {
+    var syncChangesCallCount: Int = 0
+
+    override val state = MutableStateFlow<SyncState>(SyncState.Idle).asStateFlow()
+    override val lastServerTime = MutableStateFlow<String?>(null).asStateFlow()
+
+    override suspend fun syncChanges(): SyncState {
+        syncChangesCallCount += 1
+        return SyncState.Idle
+    }
+
+    override suspend fun syncFull(): SyncState = SyncState.Idle
 }

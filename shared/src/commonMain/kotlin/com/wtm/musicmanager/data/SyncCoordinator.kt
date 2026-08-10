@@ -36,18 +36,21 @@ import kotlinx.coroutines.flow.asStateFlow
  *   - If a sync is already in flight, [syncFull] / [syncChanges] are no-ops
  *     and the existing in-flight call wins. This avoids the "user mashes
  *     refresh" thundering-herd against the backend.
+ *
+ * Marked `open` so tests can substitute a fake with a no-op
+ * [syncChanges] that records call count (see SearchViewModelTest).
  */
-class SyncCoordinator(
+open class SyncCoordinator(
     private val api: MusicManagerApi,
     private val upsertQueries: SyncUpsertQueries,
 ) {
     private val _state = MutableStateFlow<SyncState>(SyncState.Idle)
-    val state: StateFlow<SyncState> = _state.asStateFlow()
+    open val state: StateFlow<SyncState> = _state.asStateFlow()
 
     private val _lastServerTime = MutableStateFlow<String?>(null)
-    val lastServerTime: StateFlow<String?> = _lastServerTime.asStateFlow()
+    open val lastServerTime: StateFlow<String?> = _lastServerTime.asStateFlow()
 
-    suspend fun syncFull(): SyncState {
+    open suspend fun syncFull(): SyncState {
         if (_state.value is SyncState.Running) return _state.value
         _state.value = SyncState.Running(phase = SyncPhase.Full)
 
@@ -71,7 +74,7 @@ class SyncCoordinator(
         return ok
     }
 
-    suspend fun syncChanges(): SyncState {
+    open suspend fun syncChanges(): SyncState {
         if (_state.value is SyncState.Running) return _state.value
         val since = _lastServerTime.value
         _state.value = SyncState.Running(phase = SyncPhase.Changes, since = since)
