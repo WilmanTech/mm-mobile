@@ -2,8 +2,10 @@ package com.wtm.musicmanager.ui.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.wtm.musicmanager.data.SyncPhase
 import com.wtm.musicmanager.data.SyncState
 import com.wtm.musicmanager.data.SyncTrigger
+import com.wtm.musicmanager.download.DownloadTrigger
 import com.wtm.musicmanager.pairing.PairingState
 import com.wtm.musicmanager.pairing.PairingTrigger
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -14,7 +16,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-
 /**
  * Settings screen UI state.
  *
@@ -42,6 +43,7 @@ data class SettingsUiState(
     val isSyncing: Boolean = false,
     val lastSyncError: String? = null,
     val trackCount: Long = 0L,
+    val downloadedTrackCount: Long = 0L,
     val unpairRequested: Boolean = false,
 )
 
@@ -51,14 +53,39 @@ class SettingsViewModel @Inject constructor(
     private val syncTrigger: SyncTrigger,
 ) : ViewModel() {
 
+    /**
+     * Bound post-construction. Adding it as a ctor param would trip
+     * KSP's error.NonExistentClass bug on @HiltViewModel (verified
+     * 2026-08-10 on AlbumDetailViewModel). SettingsScreen calls
+     * bindDownloadTrigger() from a LaunchedEffect.
+     */
+    var downloadTrigger: DownloadTrigger? = null
+        private set
+
+    fun bindDownloadTrigger(trigger: DownloadTrigger) {
+        if (downloadTrigger === trigger) return
+        downloadTrigger = trigger
+        // Mirror the trigger's state into the local counter so the
+        // UI's "X / Y downloaded" reads without observers having to
+        // juggle two flows. SettingsViewModel observes the count of
+        // Downloaded entries in the trigger's map.
+        viewModelScope.launch {
+            trigger.state.collect { map ->
+                _downloadedTrackCount.value = map.values.count { it is com.wtm.musicmanager.download.DownloadInfo.Downloaded }.toLong()
+            }
+        }
+    }
+
     private val _trackCount = MutableStateFlow(0L)
+    private val _downloadedTrackCount = MutableStateFlow(0L)
 
     val state: StateFlow<SettingsUiState> = combine(
         pairingRepository.state,
         syncTrigger.state,
         syncTrigger.lastServerTime,
         _trackCount,
-    ) { pairing, syncState, lastServerTime, trackCount ->
+        _downloadedTrackCount,
+    ) { pairing, syncState, lastServerTime, trackCount, downloadedCount ->
         val (deviceName, isSyncing, lastError) = when {
             pairing is PairingState.Paired -> Triple(pairing.deviceName, syncState is SyncState.Running, null)
             else -> Triple(null, syncState is SyncState.Running, null)
@@ -69,6 +96,7 @@ class SettingsViewModel @Inject constructor(
             isSyncing = isSyncing,
             lastSyncError = (syncState as? SyncState.Failed)?.reason,
             trackCount = trackCount,
+            downloadedTrackCount = downloadedCount,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -101,5 +129,10 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             pairingRepository.unpair()
         }
+    }
+
+    fun onClearAllDownloads() {
+        downloadTrigger?.clearAll()
+        _downloadedTrackCount.value = 0L
     }
 }

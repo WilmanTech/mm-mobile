@@ -133,7 +133,15 @@ class ExoPlayerRepository(
 
     override suspend fun play(track: Track) {
         pendingTrack = track
-        val url = track.stream_url ?: "${baseUrl.trimEnd('/')}/api/stream/${track.id}"
+
+        // URL/source resolution:
+        //  - If Track.local_path points to a file that actually exists
+        //    on disk (we don't trust the column alone — the file may
+        //    have been unlinked by the user via a file manager), play
+        //    from disk. No network round-trip, plays instantly.
+        //  - Otherwise, fall back to stream_url, then to the
+        //    /api/stream/{id} URL on the backend.
+        val source = resolveMediaUri(track)
 
         _state.value = PlayerState.Loading(track)
 
@@ -141,7 +149,7 @@ class ExoPlayerRepository(
         exoPlayer
 
         val mediaItemBuilder = MediaItem.Builder()
-            .setUri(url)
+            .setUri(source)
             .setMediaId(track.id.toString())
         mimeFor(track.codec)?.let { mediaItemBuilder.setMimeType(it) }
         val mediaItem = mediaItemBuilder.build()
@@ -149,6 +157,23 @@ class ExoPlayerRepository(
         exoPlayer.setMediaItem(mediaItem)
         exoPlayer.prepare()
         exoPlayer.playWhenReady = true
+    }
+
+    /**
+     * Returns the source URI/URL ExoPlayer should use for [track].
+     * Local file (if exists) > track.stream_url > baseUrl+stream.
+     */
+    private fun resolveMediaUri(track: Track): android.net.Uri {
+        val localPath = track.local_path
+        if (localPath != null) {
+            val f = java.io.File(localPath)
+            if (f.exists() && f.canRead()) {
+                return android.net.Uri.fromFile(f)
+            }
+            // Stale local_path — fall through to remote.
+        }
+        val url = track.stream_url ?: "${baseUrl.trimEnd('/')}/api/stream/${track.id}"
+        return android.net.Uri.parse(url)
     }
 
     override fun playPause() {

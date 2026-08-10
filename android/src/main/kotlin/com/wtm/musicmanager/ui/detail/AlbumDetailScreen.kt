@@ -58,10 +58,17 @@ import com.wtm.musicmanager.db.Track
 fun AlbumDetailScreen(
     onBack: () -> Unit,
     onTrackClick: (com.wtm.musicmanager.db.Track) -> Unit = {},
+    downloadTrigger: com.wtm.musicmanager.download.DownloadTrigger,
     modifier: Modifier = Modifier,
     viewModel: AlbumDetailViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+
+    // Bind the download trigger into the VM so the per-row icon
+    // re-renders reactively. Idempotent (the VM checks identity).
+    androidx.compose.runtime.LaunchedEffect(downloadTrigger) {
+        viewModel.bindDownloadTrigger(downloadTrigger)
+    }
 
     Scaffold(
         modifier = modifier,
@@ -96,6 +103,9 @@ fun AlbumDetailScreen(
                     album = state.album!!,
                     tracks = state.tracks,
                     onTrackClick = onTrackClick,
+                    downloads = state.downloads,
+                    onEnqueueDownload = viewModel::enqueueDownload,
+                    onDeleteDownload = viewModel::deleteDownload,
                 )
             }
         }
@@ -107,6 +117,9 @@ private fun AlbumDetailContent(
     album: Album,
     tracks: List<Track>,
     onTrackClick: (Track) -> Unit,
+    downloads: Map<Long, com.wtm.musicmanager.download.DownloadInfo> = emptyMap(),
+    onEnqueueDownload: (Track) -> Unit = {},
+    onDeleteDownload: (Track) -> Unit = {},
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -127,7 +140,13 @@ private fun AlbumDetailContent(
             }
         } else {
             items(tracks, key = { it.id }) { track ->
-                TrackRow(track = track, onClick = { onTrackClick(track) })
+                TrackRow(
+                    track = track,
+                    onClick = { onTrackClick(track) },
+                    downloadState = downloads[track.id] ?: com.wtm.musicmanager.download.DownloadInfo.NotDownloaded,
+                    onEnqueueDownload = onEnqueueDownload,
+                    onDeleteDownload = onDeleteDownload,
+                )
                 HorizontalDivider(
                     modifier = Modifier.padding(start = 80.dp),
                     color = MaterialTheme.colorScheme.outlineVariant,
@@ -202,6 +221,9 @@ private fun AlbumHeader(album: Album, trackCount: Int) {
 private fun TrackRow(
     track: Track,
     onClick: () -> Unit,
+    downloadState: com.wtm.musicmanager.download.DownloadInfo = com.wtm.musicmanager.download.DownloadInfo.NotDownloaded,
+    onEnqueueDownload: (com.wtm.musicmanager.db.Track) -> Unit = {},
+    onDeleteDownload: (com.wtm.musicmanager.db.Track) -> Unit = {},
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -250,6 +272,12 @@ private fun TrackRow(
             text = formatDuration(track.duration_ms),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        com.wtm.musicmanager.ui.downloads.DownloadIcon(
+            track = track,
+            state = downloadState,
+            onEnqueue = onEnqueueDownload,
+            onDelete = onDeleteDownload,
         )
     }
 }

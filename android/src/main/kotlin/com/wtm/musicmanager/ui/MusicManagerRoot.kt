@@ -26,6 +26,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.wtm.musicmanager.ui.detail.AlbumDetailScreen
 import com.wtm.musicmanager.ui.detail.ArtistDetailScreen
 import com.wtm.musicmanager.ui.detail.PlaylistDetailScreen
+import com.wtm.musicmanager.ui.downloads.DownloadViewModel
 import com.wtm.musicmanager.ui.library.LibraryScreen
 import com.wtm.musicmanager.ui.nowplaying.NowPlayingMini
 import com.wtm.musicmanager.pairing.PairingState
@@ -53,6 +54,7 @@ import com.wtm.musicmanager.ui.settings.SettingsScreen
 fun MusicManagerRoot(
     rootViewModel: RootViewModel = hiltViewModel(),
     nowPlayingViewModel: NowPlayingMiniViewModel = hiltViewModel(),
+    downloadViewModel: DownloadViewModel = hiltViewModel(),
 ) {
     val pairingState = rootViewModel.pairingState
 
@@ -112,6 +114,7 @@ fun MusicManagerRoot(
                 is DetailOverlay.Album -> AlbumDetailScreen(
                     onBack = { detail = null },
                     onTrackClick = { nowPlayingViewModel.play(it) },
+                    downloadTrigger = downloadViewModel,
                 )
                 is DetailOverlay.Artist -> ArtistDetailScreen(
                     onBack = { detail = null },

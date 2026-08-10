@@ -179,6 +179,21 @@ interface SyncUpsertQueries {
     fun deleteAllTracks()
     fun deleteAllPlaylists()
     fun deleteAllPlaylistTracks()
+
+    /**
+     * Update a track's download fields without touching its metadata.
+     * Used by [com.wtm.musicmanager.download.DownloadRepository] after a
+     * DownloadWorker completes (success or failure) so the UI sees the
+     * new local_path + download_state without re-syncing.
+     *
+     * [localPath] is null when the download failed or the file was
+     * deleted (Settings → Storage → Clear).
+     */
+    fun updateTrackDownload(
+        trackId: Long,
+        localPath: String?,
+        state: com.wtm.musicmanager.domain.model.DownloadState,
+    )
 }
 
 sealed interface SyncState {
