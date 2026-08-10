@@ -62,6 +62,9 @@ import com.wtm.musicmanager.db.Track
  */
 @Composable
 fun SearchScreen(
+    onAlbumClick: (Long) -> Unit,
+    onArtistClick: (Long) -> Unit,
+    onPlaylistClick: (Long) -> Unit,
     modifier: Modifier = Modifier,
     viewModel: SearchViewModel = hiltViewModel(),
 ) {
@@ -92,9 +95,9 @@ fun SearchScreen(
 
         when (state.activeTab) {
             SearchTab.Tracks -> TrackResults(tracks = state.tracks)
-            SearchTab.Albums -> AlbumResults(albums = state.albums)
-            SearchTab.Artists -> ArtistResults(artists = state.artists)
-            SearchTab.Playlists -> PlaylistResults(playlists = state.playlists)
+            SearchTab.Albums -> AlbumResults(albums = state.albums, onAlbumClick = onAlbumClick)
+            SearchTab.Artists -> ArtistResults(artists = state.artists, onArtistClick = onArtistClick)
+            SearchTab.Playlists -> PlaylistResults(playlists = state.playlists, onPlaylistClick = onPlaylistClick)
         }
     }
 }
@@ -188,7 +191,10 @@ private fun SearchTrackRow(track: Track) {
 // =====================================================================
 
 @Composable
-private fun AlbumResults(albums: List<Album>) {
+private fun AlbumResults(
+    albums: List<Album>,
+    onAlbumClick: (Long) -> Unit,
+) {
     if (albums.isEmpty()) {
         EmptyResults("Sin álbumes", "No hay álbumes que coincidan con la búsqueda.")
         return
@@ -198,44 +204,49 @@ private fun AlbumResults(albums: List<Album>) {
         contentPadding = PaddingValues(vertical = 8.dp),
     ) {
         items(albums, key = { it.id }) { album ->
-            SearchAlbumRow(album = album)
+            SearchAlbumRow(album = album, onClick = { onAlbumClick(album.id) })
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         }
     }
 }
 
 @Composable
-private fun SearchAlbumRow(album: Album) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+private fun SearchAlbumRow(album: Album, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        color = MaterialTheme.colorScheme.surface,
     ) {
-        ResultArtwork(icon = Icons.Default.Album, sizeDp = 56)
-        Spacer(Modifier.width(16.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = album.title,
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = album.artist_name.ifBlank { "—" },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        album.year?.let { year ->
-            Text(
-                text = year.toString(),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+        ) {
+            ResultArtwork(icon = Icons.Default.Album, sizeDp = 56)
+            Spacer(Modifier.width(16.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = album.title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = album.artist_name.ifBlank { "—" },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            album.year?.let { year ->
+                Text(
+                    text = year.toString(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }
@@ -245,7 +256,10 @@ private fun SearchAlbumRow(album: Album) {
 // =====================================================================
 
 @Composable
-private fun ArtistResults(artists: List<Artist>) {
+private fun ArtistResults(
+    artists: List<Artist>,
+    onArtistClick: (Long) -> Unit,
+) {
     if (artists.isEmpty()) {
         EmptyResults("Sin artistas", "No hay artistas que coincidan con la búsqueda.")
         return
@@ -255,44 +269,49 @@ private fun ArtistResults(artists: List<Artist>) {
         contentPadding = PaddingValues(vertical = 8.dp),
     ) {
         items(artists, key = { it.id }) { artist ->
-            SearchArtistRow(artist = artist)
+            SearchArtistRow(artist = artist, onClick = { onArtistClick(artist.id) })
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         }
     }
 }
 
 @Composable
-private fun SearchArtistRow(artist: Artist) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+private fun SearchArtistRow(artist: Artist, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        color = MaterialTheme.colorScheme.surface,
     ) {
-        ResultArtwork(
-            icon = Icons.Default.Person,
-            shape = androidx.compose.foundation.shape.CircleShape,
-        )
-        Spacer(Modifier.width(16.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = artist.name,
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+        ) {
+            ResultArtwork(
+                icon = Icons.Default.Person,
+                shape = androidx.compose.foundation.shape.CircleShape,
             )
-            val albums = artist.album_count
-            val tracks = artist.track_count
-            if (albums > 0 || tracks > 0) {
-                val albumLabel = if (albums == 1L) "álbum" else "álbumes"
-                val trackLabel = if (tracks == 1L) "canción" else "canciones"
+            Spacer(Modifier.width(16.dp))
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "$albums $albumLabel · $tracks $trackLabel",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    text = artist.name,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium,
                     maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
+                val albums = artist.album_count
+                val tracks = artist.track_count
+                if (albums > 0 || tracks > 0) {
+                    val albumLabel = if (albums == 1L) "álbum" else "álbumes"
+                    val trackLabel = if (tracks == 1L) "canción" else "canciones"
+                    Text(
+                        text = "$albums $albumLabel · $tracks $trackLabel",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                    )
+                }
             }
         }
     }
@@ -303,7 +322,10 @@ private fun SearchArtistRow(artist: Artist) {
 // =====================================================================
 
 @Composable
-private fun PlaylistResults(playlists: List<Playlist>) {
+private fun PlaylistResults(
+    playlists: List<Playlist>,
+    onPlaylistClick: (Long) -> Unit,
+) {
     if (playlists.isEmpty()) {
         EmptyResults("Sin playlists", "No hay playlists que coincidan con la búsqueda.")
         return
@@ -313,46 +335,51 @@ private fun PlaylistResults(playlists: List<Playlist>) {
         contentPadding = PaddingValues(vertical = 8.dp),
     ) {
         items(playlists, key = { it.id }) { playlist ->
-            SearchPlaylistRow(playlist = playlist)
+            SearchPlaylistRow(playlist = playlist, onClick = { onPlaylistClick(playlist.id) })
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         }
     }
 }
 
 @Composable
-private fun SearchPlaylistRow(playlist: Playlist) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+private fun SearchPlaylistRow(playlist: Playlist, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        color = MaterialTheme.colorScheme.surface,
     ) {
-        ResultArtwork(icon = Icons.Default.QueueMusic, sizeDp = 56)
-        Spacer(Modifier.width(16.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = playlist.name,
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            val tracks = playlist.track_count
-            if (tracks > 0L) {
-                val trackLabel = if (tracks == 1L) "canción" else "canciones"
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+        ) {
+            ResultArtwork(icon = Icons.Default.QueueMusic, sizeDp = 56)
+            Spacer(Modifier.width(16.dp))
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "$tracks $trackLabel",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    text = playlist.name,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium,
                     maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
-            }
-            if (playlist.is_smart == 1L) {
-                Text(
-                    text = "Smart playlist",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                )
+                val tracks = playlist.track_count
+                if (tracks > 0L) {
+                    val trackLabel = if (tracks == 1L) "canción" else "canciones"
+                    Text(
+                        text = "$tracks $trackLabel",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                    )
+                }
+                if (playlist.is_smart == 1L) {
+                    Text(
+                        text = "Smart playlist",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
             }
         }
     }

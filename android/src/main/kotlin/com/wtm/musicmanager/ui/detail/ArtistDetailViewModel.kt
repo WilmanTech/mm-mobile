@@ -15,7 +15,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -62,8 +61,7 @@ class ArtistDetailViewModel @Inject constructor(
     val state: StateFlow<ArtistDetailUiState> = combine(
         _artist,
         repository.observeAlbumsByArtist(artistId),
-        flowOf(LibraryQuery(artistId = artistId))
-            .let { query -> repository.observeTracks(query) },
+        repository.observeTracks(LibraryQuery(artistId = artistId)),
         _notFound,
     ) { artist, albums, tracks, notFound ->
         ArtistDetailUiState(
