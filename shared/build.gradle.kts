@@ -65,10 +65,12 @@ kotlin {
         commonTest.dependencies {
             implementation(kotlin("test"))
             implementation(libs.kotlinx.coroutines.test)
-            // kotest-assertions / kotest-runner-junit5 / kotest-property
-            // are JVM-only (they ship with org.jetbrains.kotlin.platform.type=jvm).
-            // The iOS native test targets cannot resolve them — that's
-            // why these three are restricted to jvmTest below.
+            // kotest-assertions and kotest-property are multiplatform
+            // (KMP-published artifacts), so they live in commonTest
+            // and any commonTest file (e.g. ConnectivityTest.kt) can
+            // use shouldBe / forAll / etc.
+            implementation(libs.kotest.assertions)
+            implementation(libs.kotest.property)
             implementation(libs.turbine)
             implementation(libs.ktor.client.mock)
         }
@@ -78,12 +80,18 @@ kotlin {
         // test variants if added to commonTest. We restrict it to jvmTest,
         // where SyncCoordinatorTest.kt lives — that's the only place that
         // exercises the SQLDelight JDBC driver against an in-memory DB.
+        //
+        // kotest-runner-junit5 is also JVM-only (it integrates with the
+        // JUnit 5 platform; no native equivalent). The iOS native test
+        // targets cannot resolve it, so it lives here too. The runner
+        // is only needed by tests that extend FunSpec / StringSpec /
+        // etc. and let Kotest discover them via JUnit 5; commonTest
+        // doesn't need it (Kotlin's kotlin(\"test\") handles the
+        // @Test discovery in KMP common tests).
         jvmTest.dependencies {
             implementation(libs.sqlite.jdbc)
             implementation(libs.sqldelight.sqlite.driver)
             implementation(libs.kotest.runner)
-            implementation(libs.kotest.assertions)
-            implementation(libs.kotest.property)
         }
 
         androidMain.dependencies {
