@@ -1,6 +1,7 @@
 package com.wtm.musicmanager.player
 
 import com.wtm.musicmanager.db.Track
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * Snapshot of the playback engine exposed by [PlayerTrigger].
@@ -62,3 +63,19 @@ interface PlayerTrigger {
 
     fun stop()
 }
+
+/**
+ * Factory for the platform's PlayerTrigger.
+ *
+ * expect/actual is needed because the impl binds to platform
+ * context classes:
+ * - Android: ExoPlayer needs a [android.content.Context].
+ * - iOS: AVPlayer needs a UIViewController / dispatch queue. The
+ *   Phase 5 native Swift rewrite owns the iOS side; for now the
+ *   iOS impl is a no-op stub that never plays anything. The app
+ *   builds and runs, just with audio silence on iOS until Phase 5.
+ *
+ * The Hilt/Singleton side lives in androidMain; on iOS the Swift
+ * interop layer will replace the Kotlin entry point entirely.
+ */
+expect fun providePlayerTrigger(): PlayerTrigger
