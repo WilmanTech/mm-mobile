@@ -1,6 +1,7 @@
 package com.wtm.musicmanager.ui.detail
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -56,6 +57,7 @@ import com.wtm.musicmanager.db.Track
 @Composable
 fun AlbumDetailScreen(
     onBack: () -> Unit,
+    onTrackClick: (com.wtm.musicmanager.db.Track) -> Unit = {},
     modifier: Modifier = Modifier,
     viewModel: AlbumDetailViewModel = hiltViewModel(),
 ) {
@@ -90,14 +92,22 @@ fun AlbumDetailScreen(
             when {
                 state.notFound -> NotFoundState(onBack)
                 state.isLoading -> LoadingState()
-                else -> AlbumDetailContent(album = state.album!!, tracks = state.tracks)
+                else -> AlbumDetailContent(
+                    album = state.album!!,
+                    tracks = state.tracks,
+                    onTrackClick = onTrackClick,
+                )
             }
         }
     }
 }
 
 @Composable
-private fun AlbumDetailContent(album: Album, tracks: List<Track>) {
+private fun AlbumDetailContent(
+    album: Album,
+    tracks: List<Track>,
+    onTrackClick: (Track) -> Unit,
+) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(vertical = 8.dp),
@@ -117,7 +127,7 @@ private fun AlbumDetailContent(album: Album, tracks: List<Track>) {
             }
         } else {
             items(tracks, key = { it.id }) { track ->
-                TrackRow(track = track)
+                TrackRow(track = track, onClick = { onTrackClick(track) })
                 HorizontalDivider(
                     modifier = Modifier.padding(start = 80.dp),
                     color = MaterialTheme.colorScheme.outlineVariant,
@@ -189,11 +199,15 @@ private fun AlbumHeader(album: Album, trackCount: Int) {
 }
 
 @Composable
-private fun TrackRow(track: Track) {
+private fun TrackRow(
+    track: Track,
+    onClick: () -> Unit,
+) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
+            .clickable(onClick = onClick)
             .padding(horizontal = 24.dp, vertical = 10.dp),
     ) {
         Box(

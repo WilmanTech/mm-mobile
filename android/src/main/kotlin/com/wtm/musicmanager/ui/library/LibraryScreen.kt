@@ -1,6 +1,7 @@
 package com.wtm.musicmanager.ui.library
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -57,6 +58,7 @@ import com.wtm.musicmanager.db.Track
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryScreen(
+    onPlayTrack: (com.wtm.musicmanager.db.Track) -> Unit = {},
     modifier: Modifier = Modifier,
     viewModel: LibraryViewModel = hiltViewModel(),
 ) {
@@ -101,6 +103,7 @@ fun LibraryScreen(
                     else ->
                         TrackList(
                             tracks = state.tracks,
+                            onPlayTrack = onPlayTrack,
                             modifier = Modifier.fillMaxSize(),
                         )
                 }
@@ -181,13 +184,17 @@ private fun FilterChip(label: String, selected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun TrackList(tracks: List<Track>, modifier: Modifier = Modifier) {
+private fun TrackList(
+    tracks: List<Track>,
+    onPlayTrack: (Track) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     LazyColumn(
         modifier = modifier,
         contentPadding = PaddingValues(vertical = 8.dp),
     ) {
         items(tracks, key = { it.id }) { track ->
-            TrackRow(track = track)
+            TrackRow(track = track, onClick = { onPlayTrack(track) })
             HorizontalDivider(
                 modifier = Modifier.padding(start = 80.dp),
                 color = MaterialTheme.colorScheme.outlineVariant,
@@ -197,11 +204,15 @@ private fun TrackList(tracks: List<Track>, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun TrackRow(track: Track) {
+private fun TrackRow(
+    track: Track,
+    onClick: () -> Unit,
+) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
+            .clickable(onClick = onClick)
             .padding(horizontal = 24.dp, vertical = 12.dp),
     ) {
         TrackArtwork()

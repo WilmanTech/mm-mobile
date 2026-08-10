@@ -1,6 +1,7 @@
 package com.wtm.musicmanager.ui.search
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -65,6 +66,7 @@ fun SearchScreen(
     onAlbumClick: (Long) -> Unit,
     onArtistClick: (Long) -> Unit,
     onPlaylistClick: (Long) -> Unit,
+    onTrackClick: (com.wtm.musicmanager.db.Track) -> Unit,
     modifier: Modifier = Modifier,
     viewModel: SearchViewModel = hiltViewModel(),
 ) {
@@ -94,7 +96,7 @@ fun SearchScreen(
         }
 
         when (state.activeTab) {
-            SearchTab.Tracks -> TrackResults(tracks = state.tracks)
+            SearchTab.Tracks -> TrackResults(tracks = state.tracks, onTrackClick = onTrackClick)
             SearchTab.Albums -> AlbumResults(albums = state.albums, onAlbumClick = onAlbumClick)
             SearchTab.Artists -> ArtistResults(artists = state.artists, onArtistClick = onArtistClick)
             SearchTab.Playlists -> PlaylistResults(playlists = state.playlists, onPlaylistClick = onPlaylistClick)
@@ -132,7 +134,10 @@ private fun SearchBar(
 // =====================================================================
 
 @Composable
-private fun TrackResults(tracks: List<Track>) {
+private fun TrackResults(
+    tracks: List<Track>,
+    onTrackClick: (Track) -> Unit,
+) {
     if (tracks.isEmpty()) {
         EmptyResults("Sin canciones", "No hay canciones que coincidan con la búsqueda.")
         return
@@ -142,7 +147,7 @@ private fun TrackResults(tracks: List<Track>) {
         contentPadding = PaddingValues(vertical = 8.dp),
     ) {
         items(tracks, key = { it.id }) { track ->
-            SearchTrackRow(track = track)
+            SearchTrackRow(track = track, onClick = { onTrackClick(track) })
             HorizontalDivider(
                 modifier = Modifier.padding(start = 80.dp),
                 color = MaterialTheme.colorScheme.outlineVariant,
@@ -152,11 +157,15 @@ private fun TrackResults(tracks: List<Track>) {
 }
 
 @Composable
-private fun SearchTrackRow(track: Track) {
+private fun SearchTrackRow(
+    track: Track,
+    onClick: () -> Unit,
+) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
+            .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
         ResultArtwork(icon = Icons.Default.MusicNote)

@@ -14,6 +14,8 @@ import com.wtm.musicmanager.network.MusicManagerApi
 import com.wtm.musicmanager.pairing.PairingRepository
 import com.wtm.musicmanager.pairing.PairingTrigger
 import com.wtm.musicmanager.pairing.TokenStore
+import com.wtm.musicmanager.player.ExoPlayerRepository
+import com.wtm.musicmanager.player.PlayerTrigger
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -108,4 +110,14 @@ object LibraryModule {
     @Provides
     @Singleton
     fun providePairingTrigger(repo: PairingRepository): PairingTrigger = repo
+
+    @Provides
+    @Singleton
+    fun provideExoPlayerRepository(
+        @ApplicationContext context: Context,
+    ): ExoPlayerRepository = ExoPlayerRepository(context, DEFAULT_BASE_URL)
+
+    @Provides
+    @Singleton
+    fun providePlayerTrigger(repo: ExoPlayerRepository): PlayerTrigger = repo
 }

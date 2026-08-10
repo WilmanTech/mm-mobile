@@ -62,7 +62,7 @@ import com.wtm.musicmanager.db.Track
 fun ArtistDetailScreen(
     onBack: () -> Unit,
     onAlbumClick: (Long) -> Unit,
-    onTrackClick: (Long) -> Unit,
+    onTrackClick: (com.wtm.musicmanager.db.Track) -> Unit,
     modifier: Modifier = Modifier,
     viewModel: ArtistDetailViewModel = hiltViewModel(),
 ) {
@@ -115,7 +115,7 @@ private fun ArtistDetailContent(
     albums: List<Album>,
     tracks: List<Track>,
     onAlbumClick: (Long) -> Unit,
-    onTrackClick: (Long) -> Unit,
+    onTrackClick: (Track) -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -159,7 +159,7 @@ private fun ArtistDetailContent(
             }
         } else {
             items(tracks, key = { it.id }) { track ->
-                TrackRow(track = track, onClick = { onTrackClick(track.id) })
+                TrackRow(track = track, onClick = { onTrackClick(track) })
                 HorizontalDivider(
                     modifier = Modifier.padding(start = 80.dp),
                     color = MaterialTheme.colorScheme.outlineVariant,
