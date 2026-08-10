@@ -154,6 +154,31 @@ class PairingRepository(
     }
 
     /**
+     * Accept a pairing token handed to us via a deep link
+     * (`mm://pair?session=...&token=...&code=...&host=...&port=...`).
+     *
+     * Unlike [start] + [refreshStatus], this skips the Pending phase
+     * entirely: the user already typed the code on the desktop, so we
+     * trust the token in the deep link as proof of authorization.
+     * Used by [MainActivity.handlePairingIntent] when the app is
+     * launched via the QR scan flow.
+     *
+     * The token is persisted immediately so a process kill between
+     * this call and the first authenticated request still leaves the
+     * app paired on next cold start ([restore] will validate).
+     */
+    fun acceptDeepLink(token: String, deviceName: String = "Paired via QR"): PairingState {
+        tokenStore.save(token)
+        val paired = PairingState.Paired(
+            token = token,
+            deviceName = deviceName,
+            pairedAt = now(),
+        )
+        _state.value = paired
+        return paired
+    }
+
+    /**
      * Restore from disk on app launch. If we have a token and /v1/ping
      * returns 200, transition to Paired. If 401, clear the stale token.
      */
