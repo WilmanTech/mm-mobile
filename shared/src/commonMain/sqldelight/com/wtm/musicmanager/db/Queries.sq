@@ -61,6 +61,31 @@ SELECT * FROM artist WHERE id = ?;
 selectAlbumById:
 SELECT * FROM album WHERE id = ?;
 
+-- Phase 2.1: SearchScreen tab queries
+-- Read-side, reactive. All four tabs (Tracks / Albums / Artists / Playlists)
+-- back onto the same `query` so the ViewModel can use a single debounce.
+
+selectAllAlbums:
+SELECT * FROM album ORDER BY title COLLATE NOCASE;
+
+searchAlbums:
+SELECT * FROM album
+WHERE title LIKE ? OR artist_name LIKE ?
+ORDER BY title COLLATE NOCASE;
+
+selectAllPlaylists:
+SELECT * FROM playlist ORDER BY name COLLATE NOCASE;
+
+searchPlaylists:
+SELECT * FROM playlist
+WHERE name LIKE ? OR description LIKE ?
+ORDER BY name COLLATE NOCASE;
+
+searchArtists:
+SELECT * FROM artist
+WHERE name LIKE ?
+ORDER BY name COLLATE NOCASE;
+
 deleteAllArtists:
 DELETE FROM artist;
 
