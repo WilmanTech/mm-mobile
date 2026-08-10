@@ -4,8 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.wtm.musicmanager.data.SyncState
 import com.wtm.musicmanager.data.SyncTrigger
-import com.wtm.musicmanager.pairing.PairingRepository
 import com.wtm.musicmanager.pairing.PairingState
+import com.wtm.musicmanager.pairing.PairingTrigger
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -47,7 +47,7 @@ data class SettingsUiState(
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
-    private val pairingRepository: PairingRepository,
+    private val pairingRepository: PairingTrigger,
     private val syncTrigger: SyncTrigger,
 ) : ViewModel() {
 

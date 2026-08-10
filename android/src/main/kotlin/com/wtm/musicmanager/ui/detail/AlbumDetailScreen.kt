@@ -52,6 +52,7 @@ import com.wtm.musicmanager.db.Track
  * a `var selectedAlbumId by remember` and renders this screen
  * conditionally.
  */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun AlbumDetailScreen(
     onBack: () -> Unit,
@@ -134,7 +135,6 @@ private fun AlbumHeader(album: Album, trackCount: Int) {
             .padding(horizontal = 24.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Big cover placeholder (no real cover loading in Phase 3).
         Box(
             modifier = Modifier
                 .size(120.dp)
@@ -166,13 +166,15 @@ private fun AlbumHeader(album: Album, trackCount: Int) {
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            val meta = buildString {
-                album.year?.let { append(it) }
-                if (trackCount > 0) {
-                    if (isNotEmpty()) append(" · ")
-                    append("$trackCount ")
-                    append(if (trackCount == 1) "canción" else "canciones")
-                }
+            val year = album.year
+            val meta = if (year != null && trackCount > 0) {
+                "$year · $trackCount " + if (trackCount == 1) "canción" else "canciones"
+            } else if (year != null) {
+                year.toString()
+            } else if (trackCount > 0) {
+                "$trackCount " + if (trackCount == 1) "canción" else "canciones"
+            } else {
+                ""
             }
             if (meta.isNotEmpty()) {
                 Spacer(Modifier.height(2.dp))
@@ -194,7 +196,6 @@ private fun TrackRow(track: Track) {
             .fillMaxWidth()
             .padding(horizontal = 24.dp, vertical = 10.dp),
     ) {
-        // Track number / placeholder
         Box(
             modifier = Modifier.size(40.dp),
             contentAlignment = Alignment.Center,
@@ -222,7 +223,7 @@ private fun TrackRow(track: Track) {
                 fontWeight = FontWeight.Medium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-            }
+            )
             Text(
                 text = track.artist_name,
                 style = MaterialTheme.typography.bodySmall,

@@ -50,6 +50,7 @@ import com.wtm.musicmanager.db.Track
  *
  * Like AlbumDetail / ArtistDetail, the parent owns navigation state.
  */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun PlaylistDetailScreen(
     onBack: () -> Unit,

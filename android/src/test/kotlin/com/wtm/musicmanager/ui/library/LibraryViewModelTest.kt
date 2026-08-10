@@ -132,10 +132,13 @@ private class FakeLibraryRepository : LibraryRepository {
         MutableStateFlow<List<Playlist>>(emptyList()).asStateFlow()
     override fun searchArtists(query: String): Flow<List<Artist>> =
         MutableStateFlow<List<Artist>>(emptyList()).asStateFlow()
+    override fun observePlaylistTracks(playlistId: Long): Flow<List<Track>> =
+        MutableStateFlow<List<Track>>(emptyList()).asStateFlow()
 
     override suspend fun trackById(id: Long): Track? = null
     override suspend fun artistById(id: Long): Artist? = null
     override suspend fun albumById(id: Long): Album? = null
+    override suspend fun playlistById(id: Long): Playlist? = null
 }
 
 private class FakeSyncCoordinator : SyncTrigger {

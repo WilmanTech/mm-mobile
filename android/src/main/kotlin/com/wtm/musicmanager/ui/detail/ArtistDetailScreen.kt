@@ -57,6 +57,7 @@ import com.wtm.musicmanager.db.Track
  * (e.g. on artist screen, tap an album → set selectedAlbumId → render
  * AlbumDetailScreen).
  */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun ArtistDetailScreen(
     onBack: () -> Unit,
