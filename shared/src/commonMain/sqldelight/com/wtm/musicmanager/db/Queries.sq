@@ -61,6 +61,9 @@ SELECT * FROM artist WHERE id = ?;
 selectAlbumById:
 SELECT * FROM album WHERE id = ?;
 
+selectPlaylistById:
+SELECT * FROM playlist WHERE id = ?;
+
 -- Phase 2.1: SearchScreen tab queries
 -- Read-side, reactive. All four tabs (Tracks / Albums / Artists / Playlists)
 -- back onto the same `query` so the ViewModel can use a single debounce.
