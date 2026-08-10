@@ -65,9 +65,10 @@ kotlin {
         commonTest.dependencies {
             implementation(kotlin("test"))
             implementation(libs.kotlinx.coroutines.test)
-            implementation(libs.kotest.runner)
-            implementation(libs.kotest.assertions)
-            implementation(libs.kotest.property)
+            // kotest-assertions / kotest-runner-junit5 / kotest-property
+            // are JVM-only (they ship with org.jetbrains.kotlin.platform.type=jvm).
+            // The iOS native test targets cannot resolve them — that's
+            // why these three are restricted to jvmTest below.
             implementation(libs.turbine)
             implementation(libs.ktor.client.mock)
         }
@@ -80,6 +81,9 @@ kotlin {
         jvmTest.dependencies {
             implementation(libs.sqlite.jdbc)
             implementation(libs.sqldelight.sqlite.driver)
+            implementation(libs.kotest.runner)
+            implementation(libs.kotest.assertions)
+            implementation(libs.kotest.property)
         }
 
         androidMain.dependencies {
