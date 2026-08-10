@@ -30,9 +30,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handlePairingIntent(intent: Intent?) {
-        // vm://pair?session=...&token=...&host=...&port=...
+        // mm://pair?session=...&token=...&host=...&port=...
         val uri: Uri = intent?.data ?: return
-        if (uri.scheme != "vm" || uri.host != "pair") return
+        if (uri.scheme != "mm" || uri.host != "pair") return
         // PairingCoordinator (wired up in feature/pairing module) handles this
         // through a SharedFlow consumed by the pairing screen.
     }
