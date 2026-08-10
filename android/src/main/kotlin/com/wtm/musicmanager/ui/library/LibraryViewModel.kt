@@ -4,8 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.wtm.musicmanager.data.LibraryQuery
 import com.wtm.musicmanager.data.LibraryRepository
-import com.wtm.musicmanager.data.SyncCoordinator
 import com.wtm.musicmanager.data.SyncState
+import com.wtm.musicmanager.data.SyncTrigger
 import com.wtm.musicmanager.db.Artist
 import com.wtm.musicmanager.db.Track
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -46,7 +46,7 @@ data class LibraryUiState(
 @HiltViewModel
 class LibraryViewModel @Inject constructor(
     private val repository: LibraryRepository,
-    private val syncCoordinator: SyncCoordinator,
+    private val syncCoordinator: SyncTrigger,
 ) : ViewModel() {
 
     private val _query = MutableStateFlow(LibraryQuery.Default)

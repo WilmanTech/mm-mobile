@@ -5,6 +5,7 @@ import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import com.wtm.musicmanager.data.LibraryRepository
 import com.wtm.musicmanager.data.SqlDelightLibraryRepository
 import com.wtm.musicmanager.data.SyncCoordinator
+import com.wtm.musicmanager.data.SyncTrigger
 import com.wtm.musicmanager.data.SyncUpsertQueries
 import com.wtm.musicmanager.db.MusicManagerDatabase
 import com.wtm.musicmanager.network.AuthStorage
@@ -86,6 +87,10 @@ object LibraryModule {
         api: MusicManagerApi,
         queries: SyncUpsertQueries,
     ): SyncCoordinator = SyncCoordinator(api, queries)
+
+    @Provides
+    @Singleton
+    fun provideSyncTrigger(coordinator: SyncCoordinator): SyncTrigger = coordinator
 
     @Provides
     @Singleton

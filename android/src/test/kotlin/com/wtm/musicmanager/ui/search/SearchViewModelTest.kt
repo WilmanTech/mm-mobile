@@ -2,8 +2,8 @@ package com.wtm.musicmanager.ui.search
 
 import com.wtm.musicmanager.data.LibraryQuery
 import com.wtm.musicmanager.data.LibraryRepository
-import com.wtm.musicmanager.data.SyncCoordinator
 import com.wtm.musicmanager.data.SyncState
+import com.wtm.musicmanager.data.SyncTrigger
 import com.wtm.musicmanager.db.Album
 import com.wtm.musicmanager.db.Artist
 import com.wtm.musicmanager.db.Playlist
@@ -65,10 +65,13 @@ class SearchViewModelTest {
         val state = viewModel.state.value
         assertEquals("", state.query)
         assertEquals(SearchTab.Tracks, state.activeTab)
-        assertEquals(emptyList(), state.tracks)
-        assertEquals(emptyList(), state.albums)
-        assertEquals(emptyList(), state.artists)
-        assertEquals(emptyList(), state.playlists)
+        // The fake repository pre-seeds 3 tracks / 3 artists / 2 albums
+        // / 2 playlists. With an empty query, all four tabs should show
+        // the full set immediately (no search applied).
+        assertEquals(3, state.tracks.size)
+        assertEquals(3, state.artists.size)
+        assertEquals(2, state.albums.size)
+        assertEquals(2, state.playlists.size)
         assertFalse(state.isRefreshing)
     }
 
@@ -130,13 +133,24 @@ class SearchViewModelTest {
         fakeSync.holdOpen = true
 
         viewModel.onRefresh()
+        // Yield once so the inner coroutine has time to flip _isRefreshing
+        // and reach the suspend point inside fakeSync.syncChanges.
         advanceUntilIdle()
+
+        // While the fake is "in flight" (held on the gate), the indicator
+        // should be visible.
         assertEquals(true, viewModel.state.value.isRefreshing)
 
         viewModel.onRefresh()
         advanceUntilIdle()
         // Second call shouldn't have triggered another syncChanges.
         assertEquals(1, fakeSync.syncChangesCallCount)
+
+        // Release the in-flight sync so the first call can complete and
+        // the teardown can dispose the VM cleanly.
+        fakeSync.release()
+        advanceUntilIdle()
+        assertEquals(false, viewModel.state.value.isRefreshing)
     }
 }
 
@@ -160,21 +174,21 @@ private class FakeSearchRepository : LibraryRepository {
     )
     private val artists = MutableStateFlow(
         listOf(
-            Artist(1, "Queen", null, null, null).let { it.copy(album_count = 1L, track_count = 1L) },
-            Artist(2, "Led Zeppelin", null, null, null).let { it.copy(album_count = 1L, track_count = 1L) },
-            Artist(3, "Artist Three", null, null, null).let { it.copy(album_count = 1L, track_count = 1L) },
+            Artist(id = 1, name = "Queen", album_count = 1L, track_count = 1L, cover_url = null, synced_at = 1L),
+            Artist(id = 2, name = "Led Zeppelin", album_count = 1L, track_count = 1L, cover_url = null, synced_at = 1L),
+            Artist(id = 3, name = "Artist Three", album_count = 1L, track_count = 1L, cover_url = null, synced_at = 1L),
         )
     )
     private val albums = MutableStateFlow(
         listOf(
-            Album(1, "A Night at the Opera", 1, "Queen", 1975L, 1, 180_000L, null, null, 0L, 0L, 1L),
-            Album(2, "Led Zeppelin IV", 2, "Led Zeppelin", 1971L, 1, 180_000L, null, null, 0L, 0L, 1L),
+            Album(1, "A Night at the Opera", 1, "Queen", 1975L, 1, 180_000L, null, null, 0L, 1L),
+            Album(2, "Led Zeppelin IV", 2, "Led Zeppelin", 1971L, 1, 180_000L, null, null, 0L, 1L),
         )
     )
     private val playlists = MutableStateFlow(
         listOf(
-            Playlist(1, "Rock Classics", "Best of rock", 0, null, 0L, 0L, null, 1L),
-            Playlist(2, "Favorites", "My favorites", 0, null, 0L, 0L, null, 1L),
+            Playlist(1, "Rock Classics", "Best of rock", 0L, null, 0L, 0L, null, 1L),
+            Playlist(2, "Favorites", "My favorites", 0L, null, 0L, 0L, null, 1L),
         )
     )
 
@@ -224,23 +238,21 @@ private class FakeSearchRepository : LibraryRepository {
     override suspend fun albumById(id: Long): Album? = albums.value.firstOrNull { it.id == id }
 }
 
-private class FakeSyncCoordinator : SyncCoordinator(
-    api = throw NotImplementedError("FakeSyncCoordinator doesn't expose api"),
-    upsertQueries = throw NotImplementedError("FakeSyncCoordinator doesn't expose queries"),
-) {
+private class FakeSyncCoordinator : SyncTrigger {
     private val _state = MutableStateFlow<SyncState>(SyncState.Idle)
-    private var heldSince: Long = 0
 
     /**
-     * When true, [syncChanges] blocks in a delay loop until [release] is
-     * called or 60s elapse. Used to test that onRefresh() correctly sets
-     * isRefreshing=true and that a second onRefresh() is a no-op.
+     * When set, [syncChanges] sets the state to Running and suspends
+     * on the [heldGate] until [release] is called. Used to test that
+     * onRefresh() correctly sets isRefreshing=true and that a second
+     * onRefresh() is a no-op.
      */
     @Volatile var holdOpen: Boolean = false
     var syncChangesCallCount: Int = 0
+    private val heldGate = kotlinx.coroutines.CompletableDeferred<Unit>()
 
     fun release() {
-        holdOpen = false
+        heldGate.complete(Unit)
     }
 
     override val state = _state.asStateFlow()
@@ -249,11 +261,8 @@ private class FakeSyncCoordinator : SyncCoordinator(
     override suspend fun syncChanges(): SyncState {
         syncChangesCallCount += 1
         if (holdOpen) {
-            heldSince = System.currentTimeMillis()
             _state.value = SyncState.Running(phase = com.wtm.musicmanager.data.SyncPhase.Changes)
-            while (holdOpen && System.currentTimeMillis() - heldSince < 60_000) {
-                kotlinx.coroutines.delay(50)
-            }
+            heldGate.await()
         }
         _state.value = SyncState.Idle
         return SyncState.Idle

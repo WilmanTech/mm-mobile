@@ -2,8 +2,8 @@ package com.wtm.musicmanager.ui.library
 
 import com.wtm.musicmanager.data.LibraryQuery
 import com.wtm.musicmanager.data.LibraryRepository
-import com.wtm.musicmanager.data.SyncCoordinator
 import com.wtm.musicmanager.data.SyncState
+import com.wtm.musicmanager.data.SyncTrigger
 import com.wtm.musicmanager.db.Album
 import com.wtm.musicmanager.db.Artist
 import com.wtm.musicmanager.db.Playlist
@@ -138,13 +138,11 @@ private class FakeLibraryRepository : LibraryRepository {
     override suspend fun albumById(id: Long): Album? = null
 }
 
-private class FakeSyncCoordinator : SyncCoordinator(
-    api = throw NotImplementedError("FakeSyncCoordinator doesn't expose api"),
-    upsertQueries = throw NotImplementedError("FakeSyncCoordinator doesn't expose queries"),
-) {
+private class FakeSyncCoordinator : SyncTrigger {
     var syncChangesCallCount: Int = 0
 
-    override val state = MutableStateFlow<SyncState>(SyncState.Idle).asStateFlow()
+    private val _state = MutableStateFlow<SyncState>(SyncState.Idle)
+    override val state = _state.asStateFlow()
     override val lastServerTime = MutableStateFlow<String?>(null).asStateFlow()
 
     override suspend fun syncChanges(): SyncState {

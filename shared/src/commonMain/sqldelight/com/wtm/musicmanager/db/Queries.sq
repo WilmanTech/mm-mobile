@@ -64,6 +64,9 @@ SELECT * FROM album WHERE id = ?;
 -- Phase 2.1: SearchScreen tab queries
 -- Read-side, reactive. All four tabs (Tracks / Albums / Artists / Playlists)
 -- back onto the same `query` so the ViewModel can use a single debounce.
+-- selectAllPlaylists is already defined above (line 34 in the
+-- pre-Phase-2.1 file); we add the missing selectAllAlbums + the three
+-- LIKE-filtered search variants.
 
 selectAllAlbums:
 SELECT * FROM album ORDER BY title COLLATE NOCASE;
@@ -72,9 +75,6 @@ searchAlbums:
 SELECT * FROM album
 WHERE title LIKE ? OR artist_name LIKE ?
 ORDER BY title COLLATE NOCASE;
-
-selectAllPlaylists:
-SELECT * FROM playlist ORDER BY name COLLATE NOCASE;
 
 searchPlaylists:
 SELECT * FROM playlist

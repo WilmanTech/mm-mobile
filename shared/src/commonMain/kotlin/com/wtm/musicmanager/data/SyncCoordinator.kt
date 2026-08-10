@@ -17,6 +17,20 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
+ * Minimum surface the UI needs from the sync layer. Lets the ViewModel
+ * inject a fake in tests without subclassing [SyncCoordinator] (which
+ * has dependencies on the Ktor client + the SQLDelight upsert
+ * facade — neither of which the UI cares about).
+ */
+interface SyncTrigger {
+    val state: StateFlow<SyncState>
+    val lastServerTime: StateFlow<String?>
+
+    suspend fun syncFull(): SyncState
+    suspend fun syncChanges(): SyncState
+}
+
+/**
  * Orchestrates the full / incremental sync against the backend.
  *
  * Sync lifecycle:
@@ -37,20 +51,20 @@ import kotlinx.coroutines.flow.asStateFlow
  *     and the existing in-flight call wins. This avoids the "user mashes
  *     refresh" thundering-herd against the backend.
  *
- * Marked `open` so tests can substitute a fake with a no-op
- * [syncChanges] that records call count (see SearchViewModelTest).
+ * Implements [SyncTrigger] so the UI can depend on the minimum
+ * surface (state + syncChanges), not the full class.
  */
 open class SyncCoordinator(
     private val api: MusicManagerApi,
     private val upsertQueries: SyncUpsertQueries,
-) {
+) : SyncTrigger {
     private val _state = MutableStateFlow<SyncState>(SyncState.Idle)
-    open val state: StateFlow<SyncState> = _state.asStateFlow()
+    override val state: StateFlow<SyncState> = _state.asStateFlow()
 
     private val _lastServerTime = MutableStateFlow<String?>(null)
-    open val lastServerTime: StateFlow<String?> = _lastServerTime.asStateFlow()
+    override val lastServerTime: StateFlow<String?> = _lastServerTime.asStateFlow()
 
-    open suspend fun syncFull(): SyncState {
+    override suspend fun syncFull(): SyncState {
         if (_state.value is SyncState.Running) return _state.value
         _state.value = SyncState.Running(phase = SyncPhase.Full)
 
@@ -74,7 +88,7 @@ open class SyncCoordinator(
         return ok
     }
 
-    open suspend fun syncChanges(): SyncState {
+    override suspend fun syncChanges(): SyncState {
         if (_state.value is SyncState.Running) return _state.value
         val since = _lastServerTime.value
         _state.value = SyncState.Running(phase = SyncPhase.Changes, since = since)
