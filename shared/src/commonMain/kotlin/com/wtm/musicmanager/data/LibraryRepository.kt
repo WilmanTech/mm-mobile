@@ -31,7 +31,17 @@ interface LibraryRepository {
     fun observePlaylists(query: LibraryQuery = LibraryQuery.Default): Flow<List<Playlist>>
     fun searchArtists(query: String): Flow<List<Artist>>
 
+    // Phase 3: detail-screen read APIs. AlbumDetail / ArtistDetail /
+    // PlaylistDetail each need one Flow + one point lookup. The
+    // playlist one is a real Flow (joined across playlist_track +
+    // track, ordered by position) so it re-emits on any underlying
+    // track upsert; the album / artist ones just delegate to
+    // observeTracks(query) so the existing Phase 2 LIKE bindings
+    // cover them.
+    fun observePlaylistTracks(playlistId: Long): Flow<List<Track>>
+
     suspend fun trackById(id: Long): Track?
     suspend fun artistById(id: Long): Artist?
     suspend fun albumById(id: Long): Album?
+    suspend fun playlistById(id: Long): Playlist?
 }
