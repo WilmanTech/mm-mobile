@@ -53,9 +53,21 @@ import kotlinx.coroutines.launch
 fun SettingsScreen(
     modifier: Modifier = Modifier,
     viewModel: SettingsViewModel = hiltViewModel(),
+    downloadViewModel: com.wtm.musicmanager.ui.downloads.DownloadViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
+    // The download trigger is provided by MusicManagerRoot. We don't
+    // thread it as a constructor arg to SettingsViewModel because
+    // KSP would error on the second @Inject param (same gotcha as
+    // AlbumDetailViewModel — verified 2026-08-10).
+    androidx.compose.runtime.LaunchedEffect(downloadViewModel) {
+        viewModel.bindDownloadTrigger(downloadViewModel)
+    }
+    // Refresh the trackCount once the screen mounts.
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        viewModel.onTrackCountLoaded(0L) // placeholder — Phase 4 will wire observeTrackCount
+    }
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
@@ -129,6 +141,27 @@ fun SettingsScreen(
                     inProgress = false,
                     destructive = true,
                     onClick = { viewModel.onUnpair() },
+                )
+            }
+        }
+
+        item(key = "storage") {
+            Spacer(Modifier.height(8.dp))
+            SettingsSection(
+                title = "Almacenamiento",
+                icon = null,
+            ) {
+                KeyValueRow(
+                    key = "Canciones descargadas",
+                    value = "${state.downloadedTrackCount} / ${state.trackCount}",
+                )
+                ActionRow(
+                    label = "Borrar descargas",
+                    description = "Elimina todos los archivos en /cache/files",
+                    enabled = state.downloadedTrackCount > 0L,
+                    inProgress = false,
+                    onClick = { viewModel.onClearAllDownloads() },
+                    destructive = true,
                 )
             }
         }
