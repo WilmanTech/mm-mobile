@@ -8,6 +8,7 @@ import com.wtm.musicmanager.db.Artist
 import com.wtm.musicmanager.db.MusicManagerDatabase
 import com.wtm.musicmanager.db.Playlist
 import com.wtm.musicmanager.db.Track
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 
@@ -16,11 +17,24 @@ import kotlinx.coroutines.flow.Flow
  * SQLDelight's `asFlow().mapToList` so they re-emit whenever a write
  * touches the underlying table.
  *
+ * Dispatcher choice — why [Dispatchers.Default], not [Dispatchers.IO]:
+ *   `Dispatchers.IO` is internal in `kotlinx-coroutines-core` for the
+ *   Kotlin/Native target (iOS arm64 + simulator), so referring to it
+ *   from `commonMain` breaks the iOS build with
+ *   "Cannot access 'val IO: CoroutineDispatcher': it is internal".
+ *   `Dispatchers.Default` IS accessible from commonMain, and for our
+ *   workloads (sub-millisecond SQLite reads over a Flow) the throughput
+ *   difference is negligible — we're not doing parallel blocking IO.
+ *   When we add real network or disk-bound work we can introduce a
+ *   proper `expect/actual` dispatcher (jvm=IO, native=Default) but
+ *   for SQLDelight query observation Default is fine.
+ *
  * Point lookups (`trackById`, `artistById`, `albumById`) are
  * one-shot `executeAsOneOrNull()` calls.
  */
 class SqlDelightLibraryRepository(
     private val db: MusicManagerDatabase,
+    private val queryDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) : LibraryRepository {
 
     override fun observeTracks(query: LibraryQuery): Flow<List<Track>> {
@@ -33,17 +47,17 @@ class SqlDelightLibraryRepository(
             }
             else -> db.queriesQueries.selectAllTracks()
         }
-        return flow.asFlow().mapToList(Dispatchers.IO)
+        return flow.asFlow().mapToList(queryDispatcher)
     }
 
     override fun observeArtists(): Flow<List<Artist>> =
-        db.queriesQueries.selectAllArtists().asFlow().mapToList(Dispatchers.IO)
+        db.queriesQueries.selectAllArtists().asFlow().mapToList(queryDispatcher)
 
     override fun observeAlbumsByArtist(artistId: Long): Flow<List<Album>> =
-        db.queriesQueries.selectAlbumsByArtist(artistId).asFlow().mapToList(Dispatchers.IO)
+        db.queriesQueries.selectAlbumsByArtist(artistId).asFlow().mapToList(queryDispatcher)
 
     override fun observeTrackCount(): Flow<Long> =
-        db.queriesQueries.selectTrackCount().asFlow().mapToOne(Dispatchers.IO)
+        db.queriesQueries.selectTrackCount().asFlow().mapToOne(queryDispatcher)
 
     override fun observeAlbums(query: LibraryQuery): Flow<List<Album>> {
         val flow = if (query.search.isNotBlank()) {
@@ -52,7 +66,7 @@ class SqlDelightLibraryRepository(
         } else {
             db.queriesQueries.selectAllAlbums()
         }
-        return flow.asFlow().mapToList(Dispatchers.IO)
+        return flow.asFlow().mapToList(queryDispatcher)
     }
 
     override fun observePlaylists(query: LibraryQuery): Flow<List<Playlist>> {
@@ -62,7 +76,7 @@ class SqlDelightLibraryRepository(
         } else {
             db.queriesQueries.selectAllPlaylists()
         }
-        return flow.asFlow().mapToList(Dispatchers.IO)
+        return flow.asFlow().mapToList(queryDispatcher)
     }
 
     override fun searchArtists(query: String): Flow<List<Artist>> {
@@ -76,7 +90,7 @@ class SqlDelightLibraryRepository(
             // smaller.
             db.queriesQueries.selectAllArtists()
         }
-        return flow.asFlow().mapToList(Dispatchers.IO)
+        return flow.asFlow().mapToList(queryDispatcher)
     }
 
     override suspend fun trackById(id: Long): Track? =
