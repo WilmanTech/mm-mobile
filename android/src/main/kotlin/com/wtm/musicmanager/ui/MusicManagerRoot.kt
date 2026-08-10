@@ -25,10 +25,10 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.wtm.musicmanager.pairing.PairingState
 import com.wtm.musicmanager.ui.screens.HomeScreen
-import com.wtm.musicmanager.ui.screens.SearchScreen
 import com.wtm.musicmanager.ui.screens.SettingsScreen
 import com.wtm.musicmanager.ui.library.LibraryScreen
 import com.wtm.musicmanager.ui.pairing.PairingScreen
+import com.wtm.musicmanager.ui.search.SearchScreen
 
 private enum class TopLevelTab(
     val label: String,

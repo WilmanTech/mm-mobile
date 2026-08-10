@@ -8,12 +8,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 
-@Composable
-fun SearchScreen() {
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text("Buscar", style = MaterialTheme.typography.titleLarge)
-    }
-}
+// Phase 2.1: the SearchScreen used to live here as a placeholder. It's
+// now real (com.wtm.musicmanager.ui.search.SearchScreen) and wired into
+// the bottom-nav. SettingsScreen stays as a placeholder until Phase 3.
 
 @Composable
 fun SettingsScreen() {

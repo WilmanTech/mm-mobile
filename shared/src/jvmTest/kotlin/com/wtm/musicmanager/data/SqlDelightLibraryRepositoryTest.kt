@@ -68,6 +68,19 @@ class SqlDelightLibraryRepositoryTest {
                 synced_at INTEGER NOT NULL
             )
             """.trimIndent(),
+            """
+            CREATE TABLE playlist (
+                id INTEGER NOT NULL PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                track_count INTEGER NOT NULL DEFAULT 0,
+                cover_url TEXT,
+                is_smart INTEGER NOT NULL DEFAULT 0,
+                is_m3u_imported INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER,
+                synced_at INTEGER NOT NULL
+            )
+            """.trimIndent(),
         ).forEach { driver.execute(null, it, 0) }
         db = MusicManagerDatabase(driver)
         repository = SqlDelightLibraryRepository(db)
@@ -103,6 +116,18 @@ class SqlDelightLibraryRepositoryTest {
             duration_ms = durationMs, track_number = 1L, bitrate = 320L,
             codec = "mp3", stream_url = null, local_path = null,
             download_state = "NotDownloaded", synced_at = 1L,
+        )
+    }
+
+    private fun seedPlaylist(
+        id: Long,
+        name: String,
+        description: String? = null,
+    ) {
+        db.queriesQueries.upsertPlaylist(
+            id = id, name = name, description = description,
+            track_count = 0L, cover_url = null, is_smart = 0L,
+            is_m3u_imported = 0L, updated_at = 1L, synced_at = 1L,
         )
     }
 
@@ -191,6 +216,126 @@ class SqlDelightLibraryRepositoryTest {
             // SQLite COLLATE NOCASE: 'abba' < 'Zeppelin' in case-insensitive order
             assertEquals("abba", artists[0].name)
             assertEquals("Zeppelin", artists[1].name)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    // =================================================================
+    // Phase 2.1 — SearchScreen tab backing queries
+    // =================================================================
+
+    @Test
+    fun `observeAlbums returns all albums when search is empty`() = runTest {
+        seedTrack(1, "Bohemian Rhapsody", 1, "Queen", 1, "A Night at the Opera")
+        seedTrack(2, "Stairway to Heaven", 2, "Led Zeppelin", 2, "Led Zeppelin IV")
+
+        repository.observeAlbums(LibraryQuery.Default).test {
+            val albums = awaitItem()
+            assertEquals(2, albums.size)
+            assertEquals(
+                setOf("A Night at the Opera", "Led Zeppelin IV"),
+                albums.map { it.title }.toSet(),
+            )
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `searchAlbums filters by title or artist_name substring`() = runTest {
+        seedTrack(1, "Bohemian Rhapsody", 1, "Queen", 1, "A Night at the Opera")
+        seedTrack(2, "Stairway to Heaven", 2, "Led Zeppelin", 2, "Led Zeppelin IV")
+
+        repository.observeAlbums(LibraryQuery(search = "opera")).test {
+            val albums = awaitItem()
+            assertEquals(1, albums.size)
+            assertEquals("A Night at the Opera", albums[0].title)
+            cancelAndIgnoreRemainingEvents()
+        }
+
+        repository.observeAlbums(LibraryQuery(search = "zeppelin")).test {
+            val albums = awaitItem()
+            assertEquals(1, albums.size)
+            // "zeppelin" is the artist_name on the second album
+            assertEquals("Led Zeppelin IV", albums[0].title)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `observePlaylists returns all playlists when search is empty`() = runTest {
+        seedPlaylist(1, "Rock Classics", "Best of rock")
+        seedPlaylist(2, "Favorites", null)
+
+        repository.observePlaylists(LibraryQuery.Default).test {
+            val playlists = awaitItem()
+            assertEquals(2, playlists.size)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `searchPlaylists filters by name or description`() = runTest {
+        seedPlaylist(1, "Rock Classics", "Best of rock")
+        seedPlaylist(2, "Favorites", null)
+        seedPlaylist(3, "Indie Hits", "Indie rock curated")
+
+        // Match by name
+        repository.observePlaylists(LibraryQuery(search = "fav")).test {
+            val playlists = awaitItem()
+            assertEquals(1, playlists.size)
+            assertEquals("Favorites", playlists[0].name)
+            cancelAndIgnoreRemainingEvents()
+        }
+
+        // Match by description
+        repository.observePlaylists(LibraryQuery(search = "indie")).test {
+            val playlists = awaitItem()
+            assertEquals(1, playlists.size)
+            assertEquals("Indie Hits", playlists[0].name)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `searchArtists returns all artists when query is empty`() = runTest {
+        db.queriesQueries.upsertArtist(
+            id = 1, name = "Queen",
+            album_count = 1L, track_count = 1L, cover_url = null, synced_at = 1L,
+        )
+        db.queriesQueries.upsertArtist(
+            id = 2, name = "Led Zeppelin",
+            album_count = 1L, track_count = 1L, cover_url = null, synced_at = 1L,
+        )
+
+        repository.searchArtists("").test {
+            val artists = awaitItem()
+            assertEquals(2, artists.size)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `searchArtists filters by name substring (case insensitive)`() = runTest {
+        db.queriesQueries.upsertArtist(
+            id = 1, name = "Queen",
+            album_count = 1L, track_count = 1L, cover_url = null, synced_at = 1L,
+        )
+        db.queriesQueries.upsertArtist(
+            id = 2, name = "Led Zeppelin",
+            album_count = 1L, track_count = 1L, cover_url = null, synced_at = 1L,
+        )
+
+        repository.searchArtists("qu").test {
+            val artists = awaitItem()
+            assertEquals(1, artists.size)
+            assertEquals("Queen", artists[0].name)
+            cancelAndIgnoreRemainingEvents()
+        }
+
+        repository.searchArtists("ZEP").test {
+            val artists = awaitItem()
+            assertEquals(1, artists.size)
+            assertEquals("Led Zeppelin", artists[0].name)
             cancelAndIgnoreRemainingEvents()
         }
     }
