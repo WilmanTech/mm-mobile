@@ -93,6 +93,10 @@ class SqlDelightLibraryRepository(
         return flow.asFlow().mapToList(queryDispatcher)
     }
 
+    override fun observePlaylistTracks(playlistId: Long): Flow<List<Track>> =
+        db.queriesQueries.selectTracksByPlaylist(playlistId)
+            .asFlow().mapToList(queryDispatcher)
+
     override suspend fun trackById(id: Long): Track? =
         db.queriesQueries.selectAllTracks().executeAsList().firstOrNull { it.id == id }
 
@@ -101,4 +105,7 @@ class SqlDelightLibraryRepository(
 
     override suspend fun albumById(id: Long): Album? =
         db.queriesQueries.selectAlbumById(id).executeAsOneOrNull()
+
+    override suspend fun playlistById(id: Long): Playlist? =
+        db.queriesQueries.selectPlaylistById(id).executeAsOneOrNull()
 }

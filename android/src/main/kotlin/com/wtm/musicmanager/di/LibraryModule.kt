@@ -12,6 +12,7 @@ import com.wtm.musicmanager.network.AuthStorage
 import com.wtm.musicmanager.network.AuthStorageFactory
 import com.wtm.musicmanager.network.MusicManagerApi
 import com.wtm.musicmanager.pairing.PairingRepository
+import com.wtm.musicmanager.pairing.PairingTrigger
 import com.wtm.musicmanager.pairing.TokenStore
 import dagger.Module
 import dagger.Provides
@@ -103,4 +104,8 @@ object LibraryModule {
         api: MusicManagerApi,
         tokenStore: TokenStore,
     ): PairingRepository = PairingRepository(api, tokenStore)
+
+    @Provides
+    @Singleton
+    fun providePairingTrigger(repo: PairingRepository): PairingTrigger = repo
 }

@@ -81,6 +81,15 @@ class SqlDelightLibraryRepositoryTest {
                 synced_at INTEGER NOT NULL
             )
             """.trimIndent(),
+            """
+            CREATE TABLE playlist_track (
+                playlist_id INTEGER NOT NULL,
+                track_id INTEGER NOT NULL,
+                position INTEGER NOT NULL,
+                added_at INTEGER NOT NULL,
+                PRIMARY KEY (playlist_id, track_id)
+            )
+            """.trimIndent(),
         ).forEach { driver.execute(null, it, 0) }
         db = MusicManagerDatabase(driver)
         repository = SqlDelightLibraryRepository(db)
@@ -338,5 +347,71 @@ class SqlDelightLibraryRepositoryTest {
             assertEquals("Led Zeppelin", artists[0].name)
             cancelAndIgnoreRemainingEvents()
         }
+    }
+
+    // ===========================================================
+    // Phase 3.C — Detail screens backing queries
+    // ===========================================================
+
+    @Test
+    fun `observePlaylistTracks returns the playlist's tracks in order`() = runTest {
+        db.queriesQueries.upsertPlaylist(
+            id = 1, name = "Mixed", description = null,
+            track_count = 0L, cover_url = null, is_smart = 0L,
+            is_m3u_imported = 0L, updated_at = 1L, synced_at = 1L,
+        )
+        seedTrack(1, "First", 1, "A", 1, "Alb-1")
+        seedTrack(2, "Second", 1, "A", 1, "Alb-1")
+        seedTrack(3, "Third", 2, "B", 2, "Alb-2")
+        // Position 1, 2, 3 — manually insert playlist_track rows.
+        listOf(
+            Triple(1L, 1L, 1),
+            Triple(1L, 2L, 2),
+            Triple(1L, 3L, 3),
+        ).forEach { (pl, trackId, pos) ->
+            db.queriesQueries.upsertPlaylistTrack(
+                playlist_id = pl, track_id = trackId, position = pos.toLong(),
+                added_at = 1L,
+            )
+        }
+
+        repository.observePlaylistTracks(1L).test {
+            val tracks = awaitItem()
+            assertEquals(3, tracks.size, "expected all 3 tracks in playlist")
+            // Order is by position ASC (SQL: ORDER BY pt.position ASC).
+            assertEquals("First", tracks[0].title)
+            assertEquals("Second", tracks[1].title)
+            assertEquals("Third", tracks[2].title)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `observePlaylistTracks returns empty list for unknown playlist id`() = runTest {
+        repository.observePlaylistTracks(999L).test {
+            val tracks = awaitItem()
+            assertEquals(0, tracks.size, "unknown playlist id returns empty list")
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `playlistById returns the playlist metadata`() = runTest {
+        db.queriesQueries.upsertPlaylist(
+            id = 7, name = "Road Trip", description = "Long drive music",
+            track_count = 0L, cover_url = null, is_smart = 0L,
+            is_m3u_imported = 0L, updated_at = 1L, synced_at = 1L,
+        )
+
+        val p = repository.playlistById(7)
+        assertEquals(7L, p?.id)
+        assertEquals("Road Trip", p?.name)
+        assertEquals("Long drive music", p?.description)
+    }
+
+    @Test
+    fun `playlistById returns null for unknown id`() = runTest {
+        val p = repository.playlistById(999)
+        assertNull(p)
     }
 }

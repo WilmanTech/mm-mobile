@@ -47,9 +47,9 @@ class PairingRepository(
     private val api: MusicManagerApi,
     private val tokenStore: TokenStore,
     private val now: () -> Long = { Clock.System.now().toEpochMilliseconds() },
-) {
+) : PairingTrigger {
     private val _state = MutableStateFlow<PairingState>(PairingState.Idle)
-    val state: StateFlow<PairingState> = _state.asStateFlow()
+    override val state: StateFlow<PairingState> = _state.asStateFlow()
 
     suspend fun start(
         deviceType: String? = "mobile",
@@ -148,7 +148,7 @@ class PairingRepository(
      * Does NOT call /pairing/revoke — that's a separate concern for the
      * user to manage from the desktop UI's "Connected devices" screen.
      */
-    fun unpair() {
+    override fun unpair() {
         tokenStore.clear()
         _state.value = PairingState.Idle
     }
@@ -208,4 +208,16 @@ sealed interface PairingState {
     data class Expired(val sessionId: String) : PairingState
     data class Revoked(val sessionId: String) : PairingState
     data class Error(val sessionId: String, val httpStatus: Int) : PairingState
+}
+
+/**
+ * Minimum surface the UI needs from the pairing layer. Lets the
+ * ViewModel inject a fake in tests without subclassing
+ * [PairingRepository] (which depends on Ktor + the token store).
+ * Mirrors the SyncTrigger pattern introduced in Phase 2.1.
+ */
+interface PairingTrigger {
+    val state: StateFlow<PairingState>
+
+    fun unpair()
 }

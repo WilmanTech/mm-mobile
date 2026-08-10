@@ -233,9 +233,21 @@ private class FakeSearchRepository : LibraryRepository {
         return MutableStateFlow(filtered).asStateFlow()
     }
 
+    override fun observePlaylistTracks(playlistId: Long): Flow<List<Track>> {
+        // Playlist 1 contains tracks 1+2, playlist 2 contains track 3, in that order.
+        val all = tracks.value
+        val byPlaylist = when (playlistId) {
+            1L -> listOf(all[0], all[1])
+            2L -> listOf(all[2])
+            else -> emptyList()
+        }
+        return MutableStateFlow(byPlaylist).asStateFlow()
+    }
+
     override suspend fun trackById(id: Long): Track? = tracks.value.firstOrNull { it.id == id }
     override suspend fun artistById(id: Long): Artist? = artists.value.firstOrNull { it.id == id }
     override suspend fun albumById(id: Long): Album? = albums.value.firstOrNull { it.id == id }
+    override suspend fun playlistById(id: Long): Playlist? = playlists.value.firstOrNull { it.id == id }
 }
 
 private class FakeSyncCoordinator : SyncTrigger {
