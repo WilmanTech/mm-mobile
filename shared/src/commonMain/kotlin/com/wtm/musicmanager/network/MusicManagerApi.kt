@@ -9,8 +9,12 @@ import io.ktor.client.request.parameter
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
+import io.ktor.http.HttpStatusCode
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 
 class MusicManagerApi(
     private val client: HttpClient,
@@ -21,22 +25,70 @@ class MusicManagerApi(
      * Bootstrap snapshot of the entire library. Use on first sync or to
      * recover from a corrupted local cache. Returns artists/albums/tracks/
      * playlists in one envelope.
+     *
+     * Throws [SyncServerError] if the backend returns an error envelope
+     * (e.g. `{"detail": "No library opened"}`). This is the only sync
+     * error the UI needs to surface verbatim — everything else funnels
+     * through [SyncCoordinator.syncFull]'s generic catch block.
      */
-    suspend fun fullSync(): SyncResponse =
-        client.get("$baseUrl/api/v1/sync/full") {
-            withBearer()
-        }.body()
+    suspend fun fullSync(): SyncResponse = parseSync("$baseUrl/api/v1/sync/full")
 
     /**
      * Incremental deltas. `since` is an ISO 8601 string like
      * "2026-08-09T12:00:00Z". If null/empty the server returns the same as
      * /sync/full.
      */
-    suspend fun changesSince(since: String?): SyncResponse =
-        client.get("$baseUrl/api/v1/sync/changes") {
-            if (!since.isNullOrEmpty()) parameter("since", since)
+    suspend fun changesSince(since: String?): SyncResponse {
+        val url = "$baseUrl/api/v1/sync/changes"
+        return if (since.isNullOrEmpty()) {
+            parseSync(url)
+        } else {
+            parseSync(url, queryParams = mapOf("since" to since))
+        }
+    }
+
+    /**
+     * Common GET-then-parse logic for the two sync endpoints. The error
+     * envelope shape (`{"detail": "..."}`) is from FastAPI/HTTPException
+     * and is parsed before the success-shape parse so we can throw a
+     * typed exception instead of a generic
+     * `kotlinx.serialization.SerializationException` when the server
+     * replies with an error.
+     */
+    private suspend fun parseSync(
+        url: String,
+        queryParams: Map<String, String> = emptyMap(),
+    ): SyncResponse {
+        val response: HttpResponse = client.get(url) {
+            queryParams.forEach { (k, v) -> parameter(k, v) }
             withBearer()
-        }.body()
+        }
+        val text = response.bodyAsText()
+        if (response.status != HttpStatusCode.OK) {
+            // Parse the FastAPI error envelope. If it doesn't have a
+            // `detail` field, fall back to the status code text.
+            val detail = try {
+                JSON.decodeFromString<FastApiError>(text).detail
+            } catch (_: Throwable) {
+                text.take(200)
+            }
+            throw SyncServerError(
+                httpStatus = response.status.value,
+                detail = detail,
+            )
+        }
+        return try {
+            JSON.decodeFromString<SyncResponse>(text)
+        } catch (e: Throwable) {
+            // Couldn't parse a 200 OK body as SyncResponse. Surface as
+            // a SyncServerError so SyncCoordinator can show it instead
+            // of a generic "Sync failed" with the raw exception.
+            throw SyncServerError(
+                httpStatus = response.status.value,
+                detail = "Unparseable sync response: ${e.message}",
+            )
+        }
+    }
 
     /**
      * Build the absolute streaming URL for a track. Used by the
@@ -89,3 +141,34 @@ class MusicManagerApi(
         authStorage?.loadToken()?.let { token -> bearerAuth(token) }
     }
 }
+
+/**
+ * Thrown by [MusicManagerApi.fullSync] / [changesSince] when the
+ * backend returns an HTTP error envelope. Lets SyncCoordinator surface
+ * a meaningful message to the UI instead of the generic
+ * `kotlinx.serialization.SerializationException` (which is what
+ * would happen if we tried to `.body()` the FastAPI error envelope
+ * as `SyncResponse`).
+ *
+ * Carries both the HTTP status and the human-readable `detail` field
+ * from the error envelope. The UI can show the detail directly
+ * ("No library opened", "Invalid or revoked pairing token", etc.).
+ */
+class SyncServerError(
+    val httpStatus: Int,
+    val detail: String,
+) : RuntimeException("HTTP $httpStatus: $detail") {
+    /**
+     * True when the error means the user needs to take action on the
+     * MusicManager desktop before sync can succeed. The UI shows a
+     * targeted hint instead of a generic "sync failed".
+     */
+    val isNoLibrary: Boolean get() = detail.contains("No library", ignoreCase = true)
+}
+
+@Serializable
+private data class FastApiError(
+    val detail: String = "",
+)
+
+private val JSON = Json { ignoreUnknownKeys = true }

@@ -15,6 +15,7 @@ import com.wtm.musicmanager.network.TrackDto
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.datetime.Clock
 
 /**
  * Minimum surface the UI needs from the sync layer. Lets the ViewModel
@@ -121,7 +122,13 @@ open class SyncCoordinator(
             upsertQueries.deleteAllPlaylists()
             upsertQueries.deleteAllPlaylistTracks()
 
-            val syncedAt = response.serverTime
+            // serverTime can be null when the backend returns a stub
+            // envelope (e.g. {"detail": "No library opened"} — see the
+            // comment on SyncResponse.serverTime). In that case we fall
+            // back to the local clock so subsequent deltas still have a
+            // sensible baseline. The error itself is surfaced separately
+            // by the caller (see syncFull/syncChanges).
+            val syncedAt = response.serverTime ?: now()
             response.artists.forEach { dto ->
                 upsertQueries.upsertArtist(dto.toDomain(), syncedAt)
             }
@@ -142,7 +149,7 @@ open class SyncCoordinator(
 
     private fun applyChanges(response: SyncResponse) {
         upsertQueries.transaction {
-            val syncedAt = response.serverTime
+            val syncedAt = response.serverTime ?: now()
             response.artists.forEach { dto ->
                 upsertQueries.upsertArtist(dto.toDomain(), syncedAt)
             }
@@ -160,6 +167,19 @@ open class SyncCoordinator(
             }
         }
     }
+
+    /**
+     * ISO 8601 UTC timestamp string (with 'Z' suffix). Used as a fallback
+     * when the backend doesn't return a server_time field. Mirrors the
+     * format MusicManager emits so a delta request built from this
+     * timestamp is interchangeable with one built from a real one.
+     *
+     * Built from kotlinx-datetime's Instant.toString() which already
+     * emits ISO-8601 UTC. The value is round-tripped as an opaque
+     * string and only used for `since` comparisons.
+     */
+    private fun now(): String =
+        Clock.System.now().toString()
 }
 
 /**

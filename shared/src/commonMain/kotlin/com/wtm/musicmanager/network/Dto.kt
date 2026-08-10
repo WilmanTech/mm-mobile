@@ -84,12 +84,21 @@ data class PlaylistTrackDto(
  * client uses one parser because the shape is identical (only the filter
  * differs on the server).
  *
- * `server_time` is always present (ISO 8601 string with 'Z' suffix).
+ * `server_time` is normally present (ISO 8601 string with 'Z' suffix) but
+ * we mark it nullable defensively: the backend has been seen to return
+ * `{"detail": "No library opened"}` (HTTP 400) when the desktop hasn't
+ * opened a library yet. With `expectSuccess=false` on the Ktor client,
+ * the 400 doesn't throw — but `.body()` then tries to parse the error
+ * envelope as `SyncResponse` and throws on the missing `server_time`
+ * field. Making the field optional + capturing the parse exception
+ * upstream in [SyncCoordinator] lets us surface the real error to the
+ * UI instead of crashing with a generic serialization message.
+ *
  * `since` is only present on /sync/changes when called with a `since` arg.
  */
 @Serializable
 data class SyncResponse(
-    @SerialName("server_time") val serverTime: String,
+    @SerialName("server_time") val serverTime: String? = null,
     val since: String? = null,
     val artists: List<ArtistDto> = emptyList(),
     val albums: List<AlbumDto> = emptyList(),
