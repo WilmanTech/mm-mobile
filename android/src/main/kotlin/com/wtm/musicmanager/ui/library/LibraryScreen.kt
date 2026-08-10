@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -28,6 +29,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -47,9 +49,12 @@ import com.wtm.musicmanager.db.Track
  * - Search box mutates the ViewModel's debounced query
  * - Artist sidebar is hidden behind a horizontal chip row when there are
  *   few enough artists to fit; otherwise it stays as a separate row
+ * - Pull-to-refresh triggers a `syncChanges` against the backend; the
+ *   indicator stays up while the sync is in flight
  * - Empty state has two flavors: no-tracks-yet (after first sync) vs.
  *   no-matches (after a search)
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryScreen(
     modifier: Modifier = Modifier,
@@ -75,24 +80,30 @@ fun LibraryScreen(
             HorizontalDivider()
         }
 
-        Box(modifier = Modifier.fillMaxSize()) {
-            when {
-                state.isLoading -> LoadingState()
-                state.tracks.isEmpty() && state.query.search.isBlank() && state.query.artistId == null ->
-                    EmptyState(
-                        title = "Biblioteca vacía",
-                        message = "Pulsa «Sincronizar» en Ajustes para traer tu música desde el servidor.",
-                    )
-                state.tracks.isEmpty() ->
-                    EmptyState(
-                        title = "Sin resultados",
-                        message = "No hay canciones que coincidan con «${state.query.search}».",
-                    )
-                else ->
-                    TrackList(
-                        tracks = state.tracks,
-                        modifier = Modifier.fillMaxSize(),
-                    )
+        PullToRefreshBox(
+            isRefreshing = state.isRefreshing,
+            onRefresh = viewModel::onRefresh,
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                when {
+                    state.isLoading -> LoadingState()
+                    state.tracks.isEmpty() && state.query.search.isBlank() && state.query.artistId == null ->
+                        EmptyState(
+                            title = "Biblioteca vacía",
+                            message = "Pulsa «Sincronizar» en Ajustes para traer tu música desde el servidor.",
+                        )
+                    state.tracks.isEmpty() ->
+                        EmptyState(
+                            title = "Sin resultados",
+                            message = "No hay canciones que coincidan con «${state.query.search}».",
+                        )
+                    else ->
+                        TrackList(
+                            tracks = state.tracks,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                }
             }
         }
     }
