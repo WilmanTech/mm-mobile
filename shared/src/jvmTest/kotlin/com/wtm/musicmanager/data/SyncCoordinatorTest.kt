@@ -357,6 +357,22 @@ private class TestSyncQueries(private val driver: SqlDriver) : SyncUpsertQueries
     override fun deleteAllPlaylists() { driver.execute(null, "DELETE FROM playlist", 0) }
     override fun deleteAllPlaylistTracks() { driver.execute(null, "DELETE FROM playlist_track", 0) }
 
+    override fun updateTrackDownload(
+        trackId: Long,
+        localPath: String?,
+        state: com.wtm.musicmanager.domain.model.DownloadState,
+    ) {
+        driver.execute(
+            null,
+            "UPDATE track SET local_path = ?, download_state = ? WHERE id = ?",
+            0,
+        ) {
+            bindString(0, localPath)
+            bindString(1, state.name)
+            bindLong(2, trackId)
+        }
+    }
+
     fun count(table: String): Long =
         driver.executeQuery(0, "SELECT COUNT(*) FROM $table", { cursor ->
             cursor.next()

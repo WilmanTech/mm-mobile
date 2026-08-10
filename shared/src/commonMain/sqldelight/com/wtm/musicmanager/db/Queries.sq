@@ -22,6 +22,14 @@ upsertPlaylistTrack:
 INSERT OR REPLACE INTO playlist_track(playlist_id, track_id, position, added_at)
 VALUES (?, ?, ?, ?);
 
+updateTrackDownload:
+UPDATE track
+SET local_path = ?, download_state = ?
+WHERE id = ?;
+
+selectTracksByDownloadState:
+SELECT * FROM track WHERE download_state = ?;
+
 selectAllArtists:
 SELECT * FROM artist ORDER BY name COLLATE NOCASE;
 

@@ -105,6 +105,18 @@ class SqlDelightSyncUpsertQueries(
     override fun deleteAllPlaylists() = db.queriesQueries.deleteAllPlaylists()
     override fun deleteAllPlaylistTracks() = db.queriesQueries.deleteAllPlaylistTracks()
 
+    override fun updateTrackDownload(
+        trackId: Long,
+        localPath: String?,
+        state: com.wtm.musicmanager.domain.model.DownloadState,
+    ) {
+        db.queriesQueries.updateTrackDownload(
+            local_path = localPath,
+            download_state = state.name,
+            id = trackId,
+        )
+    }
+
     /**
      * Convert an ISO 8601 string to an epoch-ms Long (the schema uses
      * INTEGER synced_at, NOT a string — see 1.sqm). Falls back to current
