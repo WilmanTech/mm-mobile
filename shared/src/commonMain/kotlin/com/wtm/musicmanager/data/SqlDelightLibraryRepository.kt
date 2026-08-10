@@ -6,10 +6,10 @@ import app.cash.sqldelight.coroutines.mapToOne
 import com.wtm.musicmanager.db.Album
 import com.wtm.musicmanager.db.Artist
 import com.wtm.musicmanager.db.MusicManagerDatabase
+import com.wtm.musicmanager.db.Playlist
 import com.wtm.musicmanager.db.Track
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.map
 
 /**
  * SQLDelight-backed [LibraryRepository]. All observation methods use
@@ -17,9 +17,7 @@ import kotlinx.coroutines.flow.map
  * touches the underlying table.
  *
  * Point lookups (`trackById`, `artistById`, `albumById`) are
- * one-shot `executeAsOneOrNull()` calls wrapped in a single-emission
- * `Flow` via `map { listOf(it) }` so callers don't need to know whether
- * a method is reactive or not.
+ * one-shot `executeAsOneOrNull()` calls.
  */
 class SqlDelightLibraryRepository(
     private val db: MusicManagerDatabase,
@@ -46,6 +44,40 @@ class SqlDelightLibraryRepository(
 
     override fun observeTrackCount(): Flow<Long> =
         db.queriesQueries.selectTrackCount().asFlow().mapToOne(Dispatchers.IO)
+
+    override fun observeAlbums(query: LibraryQuery): Flow<List<Album>> {
+        val flow = if (query.search.isNotBlank()) {
+            val needle = "%${query.search.trim()}%"
+            db.queriesQueries.searchAlbums(needle, needle)
+        } else {
+            db.queriesQueries.selectAllAlbums()
+        }
+        return flow.asFlow().mapToList(Dispatchers.IO)
+    }
+
+    override fun observePlaylists(query: LibraryQuery): Flow<List<Playlist>> {
+        val flow = if (query.search.isNotBlank()) {
+            val needle = "%${query.search.trim()}%"
+            db.queriesQueries.searchPlaylists(needle, needle)
+        } else {
+            db.queriesQueries.selectAllPlaylists()
+        }
+        return flow.asFlow().mapToList(Dispatchers.IO)
+    }
+
+    override fun searchArtists(query: String): Flow<List<Artist>> {
+        val flow = if (query.isNotBlank()) {
+            val needle = "%${query.trim()}%"
+            db.queriesQueries.searchArtists(needle)
+        } else {
+            // Empty search → fall back to the full list (the screen is in
+            // "browse" mode). The query surface is reused so we don't have
+            // a second Flow for "all artists" — keeps the test fake
+            // smaller.
+            db.queriesQueries.selectAllArtists()
+        }
+        return flow.asFlow().mapToList(Dispatchers.IO)
+    }
 
     override suspend fun trackById(id: Long): Track? =
         db.queriesQueries.selectAllTracks().executeAsList().firstOrNull { it.id == id }
