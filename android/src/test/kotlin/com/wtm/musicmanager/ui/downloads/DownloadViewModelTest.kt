@@ -39,7 +39,7 @@ class DownloadViewModelTest {
         val fake = FakeDownloadTrigger()
         val vm = buildVm(fake)
         advanceUntilIdle()
-        assertEquals(emptyMap(), vm.state.value.infos)
+        assertEquals(emptyMap(), vm.uiState.value.infos)
         assertTrue(vm.infoFor(99L) is DownloadInfo.NotDownloaded)
         assertEquals(false, vm.isDownloaded(99L))
     }
@@ -89,7 +89,7 @@ class DownloadViewModelTest {
 
     private fun buildVm(fake: FakeDownloadTrigger): DownloadViewModel {
         val vm = DownloadViewModel(downloadTrigger = fake)
-        testScope.launch { vm.state.collect { /* swallow */ } }
+        val job = testScope.launch { vm.uiState.collect { /* swallow */ } }
         return vm
     }
 }

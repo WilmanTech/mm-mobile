@@ -24,15 +24,16 @@ import kotlinx.coroutines.flow.stateIn
  *  - infoFor(trackId): DownloadInfo — for the per-track icon
  *    (Download / Downloading spinner / Delete / Error).
  *
- * Both are pure projections over the same state flow; we don't cache
- * anything here.
+ * The viewmodel itself implements [DownloadTrigger] so callers that
+ * need a trigger (e.g. AlbumDetailViewModel.bindDownloadTrigger) can
+ * pass `this` directly.
  */
 @HiltViewModel
 class DownloadViewModel @Inject constructor(
     private val downloadTrigger: DownloadTrigger,
-) : ViewModel() {
+) : ViewModel(), DownloadTrigger by downloadTrigger {
 
-    val state: StateFlow<DownloadUiState> = downloadTrigger.state
+    val uiState: StateFlow<DownloadUiState> = downloadTrigger.state
         .map { DownloadUiState(it) }
         .stateIn(
             scope = viewModelScope,
@@ -40,18 +41,11 @@ class DownloadViewModel @Inject constructor(
             initialValue = DownloadUiState(emptyMap()),
         )
 
-    fun enqueue(track: Track) = downloadTrigger.enqueue(track)
-    fun delete(track: Track) = downloadTrigger.delete(track)
-
-    /**
-     * Convenience for the UI: look up the current info for [trackId],
-     * or NotDownloaded if the trigger has no record of it.
-     */
     fun infoFor(trackId: Long): DownloadInfo =
-        state.value.infos[trackId] ?: DownloadInfo.NotDownloaded
+        uiState.value.infos[trackId] ?: DownloadInfo.NotDownloaded
 
     fun isDownloaded(trackId: Long): Boolean =
-        state.value.infos[trackId] is DownloadInfo.Downloaded
+        uiState.value.infos[trackId] is DownloadInfo.Downloaded
 }
 
 data class DownloadUiState(

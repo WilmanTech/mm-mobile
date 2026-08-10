@@ -7,6 +7,8 @@ import com.wtm.musicmanager.data.LibraryQuery
 import com.wtm.musicmanager.data.LibraryRepository
 import com.wtm.musicmanager.db.Album
 import com.wtm.musicmanager.db.Track
+import com.wtm.musicmanager.download.DownloadInfo
+import com.wtm.musicmanager.download.DownloadTrigger
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -39,6 +41,7 @@ data class AlbumDetailUiState(
     val tracks: List<Track> = emptyList(),
     val isLoading: Boolean = true,
     val notFound: Boolean = false,
+    val downloads: Map<Long, DownloadInfo> = emptyMap(),
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -50,6 +53,28 @@ class AlbumDetailViewModel @Inject constructor(
 
     private val albumId: Long = checkNotNull(savedStateHandle.get<Long>(ARG_ALBUM_ID)) {
         "AlbumDetailViewModel requires '$ARG_ALBUM_ID' nav arg"
+    }
+
+    /**
+     * The download subsystem is wired by the Composable via
+     * [bindDownloadTrigger]. Taking a second @Inject ctor param
+     * tripped KSP's processing (a known issue when adding a new
+     * arg to an existing @HiltViewModel constructor), so the
+     * trigger is injected post-construction.
+     */
+    var downloadTrigger: DownloadTrigger? = null
+        private set
+
+    fun bindDownloadTrigger(trigger: DownloadTrigger) {
+        if (downloadTrigger === trigger) return
+        downloadTrigger = trigger
+        // Once bound, mirror the trigger's StateFlow into our combine
+        // pipeline so the per-row icon re-renders reactively.
+        viewModelScope.launch {
+            trigger.state.collect { map ->
+                downloadStateFlow.value = map
+            }
+        }
     }
 
     private val _album = MutableStateFlow<Album?>(null)
@@ -66,22 +91,32 @@ class AlbumDetailViewModel @Inject constructor(
     private val tracksFlow = flowOf(LibraryQuery(albumId = albumId))
         .flatMapLatest { repository.observeTracks(it) }
 
+    private val downloadStateFlow = MutableStateFlow<Map<Long, DownloadInfo>>(emptyMap())
+
     val state: StateFlow<AlbumDetailUiState> = combine(
         _album,
         tracksFlow,
         _notFound,
-    ) { album, tracks, notFound ->
+        downloadStateFlow,
+    ) { album, tracks, notFound, downloads ->
         AlbumDetailUiState(
             album = album,
             tracks = tracks,
             isLoading = album == null && !notFound,
             notFound = notFound,
+            downloads = downloads,
         )
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000L),
         initialValue = AlbumDetailUiState(),
     )
+
+    fun downloadInfo(trackId: Long): DownloadInfo =
+        downloadStateFlow.value[trackId] ?: DownloadInfo.NotDownloaded
+
+    fun enqueueDownload(track: Track) { downloadTrigger?.enqueue(track) }
+    fun deleteDownload(track: Track) { downloadTrigger?.delete(track) }
 
     companion object {
         const val ARG_ALBUM_ID: String = "albumId"
