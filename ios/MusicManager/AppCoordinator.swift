@@ -35,6 +35,7 @@ final class AppCoordinator: ObservableObject {
     @Published var host: String = "127.0.0.1"
     @Published var port: String = "8765"
     @Published var lastError: String?
+    @Published var showPreview: Bool = false
 
     private lazy var pairingRepository: PairingRepository = {
         makePairingRepository(host: host, port: port)
@@ -45,6 +46,21 @@ final class AppCoordinator: ObservableObject {
     init() {
         startObserving()
         Task { await restoreFromDisk() }
+
+        #if DEBUG
+        // Visual review mode: when MM_VISUAL_REVIEW=1 is set (typically via
+        // `xcrun simctl launch booted ... --env MM_VISUAL_REVIEW=1`), the
+        // app auto-opens the LibraryMockScreen sheet so designers / reviewers
+        // can land directly on the library preview without going through
+        // pairing. This is a DEBUG-only path and never ships in Release.
+        if ProcessInfo.processInfo.environment["MM_VISUAL_REVIEW"] == "1" {
+            // Defer so the root view has time to mount the sheet on the
+            // first frame, otherwise SwiftUI drops the binding.
+            DispatchQueue.main.async { [weak self] in
+                self?.showPreview = true
+            }
+        }
+        #endif
     }
 
     deinit {
@@ -125,8 +141,21 @@ final class AppCoordinator: ObservableObject {
 
     /// Handle an `mm://pair?session=...&token=...&code=...&host=...&port=...` URL.
     /// The desktop sends this after the user scans a QR code.
+    ///
+    /// Also recognises two preview URLs used during visual development
+    /// (Phase 4.A.2 — the brand palette + glass material aren't
+    /// exercised by the real pairing flow because the LibraryRepository
+    /// hasn't landed yet on iOS):
+    ///   - `mm://preview-library` — sets phase to a synthetic `.paired`
+    ///     and opens `LibraryMockScreen` via the `showPreview` flag.
     func handleDeepLink(_ url: URL) {
         guard url.scheme == "mm" else { return }
+
+        if url.host == "preview-library" {
+            showPreview = true
+            return
+        }
+
         guard url.host == "pair" else { return }
         let comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
         let items = comps?.queryItems ?? []
