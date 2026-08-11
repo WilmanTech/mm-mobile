@@ -27,7 +27,7 @@ camerax = "1.3.4"
 mlkitBarcode = "17.3.0"
 
 # iOS deployment target
-iosDeploymentTarget = "16.0"
+iosDeploymentTarget = "26.0"
 
 # Test
 junit = "4.13.2"
