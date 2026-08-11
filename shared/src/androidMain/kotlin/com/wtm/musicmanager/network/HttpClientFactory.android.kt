@@ -13,7 +13,10 @@ import io.ktor.serialization.kotlinx.json.json
  * See `HttpClientFactory.kt` in commonMain for the rationale.
  */
 actual object HttpClientFactory {
-    actual fun make(baseUrl: String): MusicManagerApi {
+    actual fun make(baseUrl: String): MusicManagerApi =
+        makeAuthenticated(baseUrl, authStorage = null)
+
+    actual fun makeAuthenticated(baseUrl: String, authStorage: AuthStorage?): MusicManagerApi {
         val client = HttpClient(OkHttp) {
             expectSuccess = false
             install(ContentNegotiation) { json(sharedJson) }
@@ -26,7 +29,7 @@ actual object HttpClientFactory {
         return MusicManagerApi(
             client = client,
             baseUrl = baseUrl,
-            authStorage = null,
+            authStorage = authStorage,
         )
     }
 }

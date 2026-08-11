@@ -1,6 +1,5 @@
-package com.wtm.musicmanager.di
+package com.wtm.musicmanager.data
 
-import com.wtm.musicmanager.data.SyncUpsertQueries
 import com.wtm.musicmanager.db.MusicManagerDatabase
 import com.wtm.musicmanager.domain.model.Album
 import com.wtm.musicmanager.domain.model.Artist
@@ -11,11 +10,18 @@ import com.wtm.musicmanager.domain.model.Track
 /**
  * SQLDelight-backed implementation of [SyncUpsertQueries] for production
  * code paths. Tests inject a `TestSyncQueries` over an in-memory
- * JdbcSqliteDriver (see SyncCoordinatorTest).
+ * JdbcSqliteDriver (see `SyncCoordinatorTest`).
  *
  * Each upsert maps a domain model into the row shape that the generated
  * SQLDelight queries expect. We do the mapping here, not in the query
  * layer, so the SQL stays plain SQL.
+ *
+ * **Moved from `android/src/main/kotlin/.../di/SqlDelightSyncUpsertQueries.kt`
+ * in Phase 4.A.4** so the iOS app can reuse the same facade when
+ * composing `SyncCoordinator` against the shared `LibraryDatabaseFactory`.
+ *
+ * The Android module still references this class through its Hilt
+ * `LibraryModule.provideSyncUpsertQueries` — no behaviour change there.
  */
 class SqlDelightSyncUpsertQueries(
     private val db: MusicManagerDatabase,

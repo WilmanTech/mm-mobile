@@ -31,12 +31,13 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.wtm.musicmanager.MusicManager
-        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
-        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
-        INFOPLIST_KEY_UILaunchScreen_Generation: YES
-        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
-        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
-        INFOPLIST_KEY_CFBundleURLTypes: ""
+        # Use a real Info.plist instead of GENERATE_INFOPLIST_FILE so we
+        # can declare `CFBundleURLTypes` for the `mm://pair` deep-link.
+        # Without this, `xcrun simctl openurl booted mm://...` returns
+        # LSApplicationWorkspaceErrorDomain error 115 because the OS
+        # doesn't know which scheme belongs to our bundle.
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: MusicManager/Info.plist
         TARGETED_DEVICE_FAMILY: "1,2"
     dependencies:
       - sdk: Foundation.framework

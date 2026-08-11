@@ -37,11 +37,41 @@ final class AppCoordinator: ObservableObject {
     @Published var lastError: String?
     @Published var showPreview: Bool = false
 
+    /// Library graph wired by Phase 4.A.4 — populated the moment the app
+    /// transitions into `.paired` and reset on `unpair()`. Swift views
+    /// observe this `Optional` to decide whether to render the real
+    /// `LibraryScreen` (graph != nil) or the post-pairing placeholder
+    /// (graph == nil while `syncFull` is in flight).
+    @Published private(set) var libraryGraph: LibraryEntry.Graph?
+
+    /// Persistent bearer-token storage, built once and shared by both the
+    /// pairing layer and the library layer. Constructing it through the
+    /// Kotlin `TokenStore.from(storage:)` factory ensures the bearer set
+    /// by `pairingRepository.acceptDeepLink(token:)` is the exact same
+    /// token the library's `MusicManagerApi` reads on its authenticated
+    /// requests — without this sharing, the first `/api/v1/sync/full`
+    /// after pairing would 401.
+    ///
+    /// `DefaultAuthStorage_iosKt.defaultAuthStorage()` is the iOS top-level
+    /// `actual fun defaultAuthStorage()` from `DefaultAuthStorage.ios.kt`.
+    /// Kotlin/Native exposes top-level `expect`/`actual` functions as a
+    /// Swift class named `<FileName>_<Platform>Kt` with the original name
+    /// as a static method.
+    ///
+    /// Both the `AuthStorage` (the persistent backing) and the
+    /// `TokenStore` (the read/write facade the Kotlin code uses) are
+    /// constructed once and shared. `PairingEntry.make(...)` builds its
+    /// own `TokenStore` internally from the same backing store via the
+    /// Kotlin `PairingEntry` factory — so pairing writes go through the
+    /// same store the library API reads from.
+    private let authStorage: AuthStorage = DefaultAuthStorage_iosKt.defaultAuthStorage()
+
     private lazy var pairingRepository: PairingRepository = {
         makePairingRepository(host: host, port: port)
     }()
 
     private var stateObserverTask: Task<Void, Never>?
+    private var syncTask: Task<Void, Never>?
 
     init() {
         startObserving()
@@ -60,22 +90,55 @@ final class AppCoordinator: ObservableObject {
                 self?.showPreview = true
             }
         }
+
+        // Test deep-link bypass — `simctl openurl` to a custom scheme triggers
+        // iOS's "¿Abrir en MusicManager?" consent prompt the first time per
+        // session, which blocks automated verification. Launching the app with
+        // `xcrun simctl launch booted bundle --MM_TEST_TOKEN=***` skips the URL
+        // round-trip and writes the bearer directly into the same
+        // `AuthStorage` the real `acceptDeepLink` path uses. DEBUG-only and
+        // compile-time removed from Release builds.
+        let args = CommandLine.arguments
+        if let tokenIdx = args.firstIndex(of: "--MM_TEST_TOKEN"),
+           tokenIdx + 1 < args.count {
+            // Optional overrides; fall back to current self.host / self.port.
+            if let hostIdx = args.firstIndex(of: "--MM_TEST_HOST"),
+               hostIdx + 1 < args.count {
+                self.host = args[hostIdx + 1]
+            }
+            if let portIdx = args.firstIndex(of: "--MM_TEST_PORT"),
+               portIdx + 1 < args.count {
+                self.port = args[portIdx + 1]
+            }
+            pairingRepository = makePairingRepository(host: host, port: port)
+            startObserving()
+            pairingRepository.acceptDeepLink(
+                token: args[tokenIdx + 1],
+                deviceName: "Test (launch-arg)"
+            )
+        }
         #endif
     }
 
     deinit {
         stateObserverTask?.cancel()
+        syncTask?.cancel()
     }
 
     // MARK: - Public actions
 
     /// Update the backend target. Re-creates the pairing repo so the new host/port
-    /// is honored on the next start() call.
+    /// is honored on the next start() call. Also tears down the library
+    /// graph (it would be pointing at the old backend) and re-creates it
+    /// if we're still paired.
     func updateBackend(host: String, port: String) {
         self.host = host
         self.port = port
         pairingRepository = makePairingRepository(host: host, port: port)
         startObserving()
+        if case .paired = phase {
+            rebuildLibraryGraph()
+        }
     }
 
     /// Build a `PairingRepository` against the given host/port. The whole
@@ -83,6 +146,36 @@ final class AppCoordinator: ObservableObject {
     /// Swift side stays oblivious to those types.
     private func makePairingRepository(host: String, port: String) -> PairingRepository {
         return PairingEntry.shared.make(host: host, port: port)
+    }
+
+    /// Construct a fresh `LibraryEntry.Graph` against the current host/port
+    /// and trigger `syncFull()` to repopulate the in-memory SQLite cache.
+    /// The iOS `NativeSqliteDriver` is in-memory only (Pitfall #35 in the
+    /// KMP bootstrap skill), so the cache is empty on every launch — the
+    /// sync is what makes `observeTracks()` and `observeArtists()` emit
+    /// anything other than an empty list.
+    private func rebuildLibraryGraph() {
+        syncTask?.cancel()
+        libraryGraph = LibraryEntry.shared.make(host: host, port: port, tokenStore: authStorage)
+        guard let graph = libraryGraph else { return }
+        syncTask = Task { [weak self] in
+            let result: SyncState? = await withCheckedContinuation { cont in
+                graph.syncCoordinator.syncFull { state, error in
+                    cont.resume(returning: state)
+                }
+            }
+            await MainActor.run {
+                self?.lastError = Self.errorMessage(for: result)
+            }
+        }
+    }
+
+    private static func errorMessage(for state: SyncState?) -> String? {
+        guard let state else { return "Library sync returned no state" }
+        if let failed = state as? SyncStateFailed {
+            return "Library sync failed: \(failed.reason)"
+        }
+        return nil
     }
 
     /// Start a pairing session. The backend returns the 4-word code immediately;
@@ -185,7 +278,20 @@ final class AppCoordinator: ObservableObject {
         let collector = PairingStateCollector { [weak self] state in
             Task { @MainActor in
                 guard let self else { return }
-                self.phase = Self.phase(from: state)
+                let previousPhase = self.phase
+                let newPhase = Self.phase(from: state)
+                self.phase = newPhase
+
+                // Side-effect on the paired/unpaired transition:
+                //   entering .paired → build the LibraryEntry graph and
+                //     trigger syncFull() (in-memory DB needs repopulation).
+                //   leaving .paired → tear down the graph so the next
+                //     pair starts from a clean slate.
+                if case .paired = newPhase, !Self.isPaired(previousPhase) {
+                    self.rebuildLibraryGraph()
+                } else if Self.isPaired(previousPhase), !Self.isPaired(newPhase) {
+                    self.libraryGraph = nil
+                }
             }
         }
 
@@ -251,6 +357,14 @@ final class AppCoordinator: ObservableObject {
             || state is PairingStateExpired
             || state is PairingStateRevoked
             || state is PairingStateError
+    }
+
+    /// True when the Swift-side `Phase` is the connected state — used by
+    /// the observer to detect the entering/leaving paired transitions
+    /// that drive the library graph lifecycle.
+    private static func isPaired(_ phase: Phase) -> Bool {
+        if case .paired = phase { return true }
+        return false
     }
 
     /// Map the KMP `PairingState` to our Swift `Phase` enum. See note in
