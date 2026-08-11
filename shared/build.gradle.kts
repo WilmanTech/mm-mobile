@@ -23,6 +23,14 @@ android {
 kotlin {
     jvmToolchain(21)
 
+    // `-Xexpect-actual-classes` opts the compiler into the stabilized
+    // expect/actual classes/objects behaviour (Kotlin 2.0+). Without
+    // this flag Kotlin emits a "Beta" warning that the CI logs treat as
+    // non-fatal but is noisy and will break at -Werror.
+    compilerOptions {
+        freeCompilerArgs.add("-Xexpect-actual-classes")
+    }
+
     androidTarget {
         compilations.all {
             compileTaskProvider.configure {
@@ -123,8 +131,9 @@ kotlin {
         }
 
         jvmMain.dependencies {
-            // JVM target is test-only; use OkHttp engine for parity with Android.
-            implementation(libs.ktor.client.okhttp)
+            // JVM target is test-only; use CIO engine (pure-Kotlin) so
+            // :shared:jvmTest doesn't pull in OkHttp's android.test artifacts.
+            implementation(libs.ktor.client.cio)
         }
     }
 }
