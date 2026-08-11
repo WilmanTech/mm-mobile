@@ -5,6 +5,7 @@ plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.sqldelight)
+    alias(libs.plugins.kotlinCocoapods)
 }
 
 android {
@@ -21,6 +22,14 @@ android {
 
 kotlin {
     jvmToolchain(21)
+
+    // `-Xexpect-actual-classes` opts the compiler into the stabilized
+    // expect/actual classes/objects behaviour (Kotlin 2.0+). Without
+    // this flag Kotlin emits a "Beta" warning that the CI logs treat as
+    // non-fatal but is noisy and will break at -Werror.
+    compilerOptions {
+        freeCompilerArgs.add("-Xexpect-actual-classes")
+    }
 
     androidTarget {
         compilations.all {
@@ -44,6 +53,22 @@ kotlin {
     // Note: iOS Xcode integration via CocoaPods is configured later (Fase 2+).
     // For Fase 0 we use `linkDebugFrameworkIosX64` to produce the .framework
     // and consume it from a plain Xcode project (manual setup).
+
+    cocoapods {
+        summary = "Shared Kotlin module for MusicManager iOS app"
+        homepage = "https://github.com/WilmanTech/mm-mobile"
+        ios.deploymentTarget = "17.0"
+        framework {
+            // Module name exposed to Swift as `import MusicManagerShared`.
+            baseName = "MusicManagerShared"
+            isStatic = false
+        }
+        // The :shared:podInstall task wires this Gradle module into the
+        // iOS Xcode project via CocoaPods. Run with:
+        //   ./gradlew :shared:podInstall
+        // from the repo root after the first build to generate the podspec
+        // and execute `pod install` inside ios/.
+    }
 
     sourceSets {
         commonMain.dependencies {
@@ -106,8 +131,9 @@ kotlin {
         }
 
         jvmMain.dependencies {
-            // JVM target is test-only; use OkHttp engine for parity with Android.
-            implementation(libs.ktor.client.okhttp)
+            // JVM target is test-only; use CIO engine (pure-Kotlin) so
+            // :shared:jvmTest doesn't pull in OkHttp's android.test artifacts.
+            implementation(libs.ktor.client.cio)
         }
     }
 }

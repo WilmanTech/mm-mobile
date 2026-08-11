@@ -11,6 +11,10 @@ import platform.Foundation.NSUserDefaults
  *
  * iOS app sandbox clears UserDefaults on app uninstall, so no manual cleanup
  * is needed on unpair beyond [clearToken].
+ *
+ * The empty `()` matches the `expect class AuthStorage()` declaration in
+ * commonMain — Kotlin requires the constructor signature on `actual` classes
+ * to mirror the `expect` exactly.
  */
 actual class AuthStorage {
     private val defaults: NSUserDefaults = NSUserDefaults.standardUserDefaults
