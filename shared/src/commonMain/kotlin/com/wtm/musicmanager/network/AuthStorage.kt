@@ -10,7 +10,7 @@ package com.wtm.musicmanager.network
  * Production builds should never use the JVM actual — Koin wires the
  * Android/iOS one based on the host platform.
  */
-expect class AuthStorage() {
+expect class AuthStorage {
     fun loadToken(): String?
     fun saveToken(token: String)
     fun clearToken()
