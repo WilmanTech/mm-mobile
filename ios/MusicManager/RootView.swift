@@ -4,27 +4,37 @@ import SwiftUI
 /// "you are connected" placeholder. Real library / search / now-playing tabs
 /// come in later phases (Phase 1+ iOS parity); for the MVP smoke we just need
 /// to prove the pairing round-trip works end-to-end.
+///
+/// When `coordinator.showPreview` is true (typically set via the
+/// MM_VISUAL_REVIEW=1 launch argument in DEBUG), the root renders
+/// `LibraryMockScreen` instead so designers / reviewers can land
+/// directly on the library preview without going through pairing.
 struct RootView: View {
 
     @EnvironmentObject private var coordinator: AppCoordinator
 
     var body: some View {
         Group {
-            switch coordinator.phase {
-            case .idle, .error:
-                PairingScreen()
-            case .pending:
-                PairingScreen()
-            case .paired:
-                PairedScreen()
+            if coordinator.showPreview {
+                LibraryMockScreen()
+            } else {
+                switch coordinator.phase {
+                case .idle, .error:
+                    PairingScreen()
+                case .pending:
+                    PairingScreen()
+                case .paired:
+                    PairedScreen()
+                }
             }
         }
-        .animation(.default, value: phaseKey)
+        .animation(.default, value: previewOrPhaseKey)
     }
 
     /// Stable key for SwiftUI animation — using the enum case directly confuses
     /// the diffing algorithm because associated values change constantly.
-    private var phaseKey: Int {
+    private var previewOrPhaseKey: Int {
+        if coordinator.showPreview { return -1 }
         switch coordinator.phase {
         case .idle: return 0
         case .pending: return 1
