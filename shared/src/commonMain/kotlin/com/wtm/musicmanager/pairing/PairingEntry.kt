@@ -1,6 +1,5 @@
 package com.wtm.musicmanager.pairing
 
-import com.wtm.musicmanager.network.AuthStorage
 import com.wtm.musicmanager.network.HttpClientFactory
 
 /**
@@ -18,13 +17,17 @@ import com.wtm.musicmanager.network.HttpClientFactory
  * signature (clock, retry policy, etc.) doesn't ripple into Swift.
  *
  * AuthStorage construction is delegated to the top-level
- * `expect fun defaultAuthStorage()` factory — see PairingEntryAuthStorage.kt
- * for each platform's `actual`. Each target wires its own backend
- * (EncryptedSharedPreferences on Android, NSUserDefaults on iOS, file-based
- * on JVM for tests).
+ * `expect fun defaultAuthStorage()` factory — see DefaultAuthStorage.ios.kt /
+ * DefaultAuthStorage.android.kt / DefaultAuthStorage.jvm.kt for each platform's
+ * `actual`. Each target wires its own backend (EncryptedSharedPreferences on
+ * Android, NSUserDefaults on iOS, file-based on JVM for tests).
  */
 object PairingEntry {
 
+    /**
+     * Build a fully-configured `PairingRepository` against `host:port`.
+     * Swift equivalent: `PairingEntry.shared.make(host:port:)`.
+     */
     fun make(host: String, port: String): PairingRepository {
         val baseUrl = "http://$host:$port"
         val api = HttpClientFactory.make(baseUrl)
