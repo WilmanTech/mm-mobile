@@ -5,6 +5,7 @@ plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.sqldelight)
+    alias(libs.plugins.kotlinCocoapods)
 }
 
 android {
@@ -44,6 +45,22 @@ kotlin {
     // Note: iOS Xcode integration via CocoaPods is configured later (Fase 2+).
     // For Fase 0 we use `linkDebugFrameworkIosX64` to produce the .framework
     // and consume it from a plain Xcode project (manual setup).
+
+    cocoapods {
+        summary = "Shared Kotlin module for MusicManager iOS app"
+        homepage = "https://github.com/WilmanTech/mm-mobile"
+        ios.deploymentTarget = "17.0"
+        framework {
+            // Module name exposed to Swift as `import MusicManagerShared`.
+            baseName = "MusicManagerShared"
+            isStatic = false
+        }
+        // The :shared:podInstall task wires this Gradle module into the
+        // iOS Xcode project via CocoaPods. Run with:
+        //   ./gradlew :shared:podInstall
+        // from the repo root after the first build to generate the podspec
+        // and execute `pod install` inside ios/.
+    }
 
     sourceSets {
         commonMain.dependencies {
