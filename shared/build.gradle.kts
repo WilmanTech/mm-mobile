@@ -57,7 +57,7 @@ kotlin {
     cocoapods {
         summary = "Shared Kotlin module for MusicManager iOS app"
         homepage = "https://github.com/WilmanTech/mm-mobile"
-        ios.deploymentTarget = "17.0"
+        ios.deploymentTarget = "26.0"
         framework {
             // Module name exposed to Swift as `import MusicManagerShared`.
             baseName = "MusicManagerShared"
