@@ -213,14 +213,32 @@ final class AppCoordinator: ObservableObject {
 
     /// Start a pairing session. The backend returns the 4-word code immediately;
     /// we poll `/api/pairing/status` every 2s until the desktop confirms.
+    ///
+    /// **Bridge crash guard**: Kotlin/Native sometimes invokes the
+    /// `(state, error) -> Void` callback with `state == nil` AND
+    /// `error == nil` when the sealed-class conversion to Swift fails
+    /// (see verify mm-mobile audit 2026-08-12; reproduced against
+    /// MusicManager backend at 192.168.1.201:8765). The previous
+    /// `cont.resume(returning: state!)` force-unwrap crashed the app
+    /// on tap. We now fall back to a synthetic `.error(...)` state so
+    /// the user sees the failure screen instead of a SIGABRT.
+    ///
+    /// The continuation is also guarded against being resumed twice
+    /// (Kotlin/Native can fire the callback once with the value, then
+    /// once with an "operation cancelled" error). The first resume
+    /// wins; the second is silently dropped.
     func startPairing() async {
         do {
             let state: PairingState = try await withCheckedThrowingContinuation { cont in
+                let box = ContinuationBox<PairingState>(continuation: cont)
                 pairingRepository.start(deviceType: "ios") { state, error in
+                    if box.tryResume() == false { return }
                     if let error = error {
                         cont.resume(throwing: error)
+                    } else if let state = state {
+                        cont.resume(returning: state)
                     } else {
-                        cont.resume(returning: state!)
+                        cont.resume(throwing: PairingStartError.emptyResponse)
                     }
                 }
             }
@@ -240,16 +258,20 @@ final class AppCoordinator: ObservableObject {
         }
         do {
             let state: PairingState = try await withCheckedThrowingContinuation { cont in
+                let box = ContinuationBox<PairingState>(continuation: cont)
                 pairingRepository.confirm(
                     sessionId: sessionId,
                     code: code,
                     deviceName: hostname(),
                     deviceType: "ios"
                 ) { state, error in
+                    if box.tryResume() == false { return }
                     if let error = error {
                         cont.resume(throwing: error)
+                    } else if let state = state {
+                        cont.resume(returning: state)
                     } else {
-                        cont.resume(returning: state!)
+                        cont.resume(throwing: PairingStartError.emptyResponse)
                     }
                 }
             }
@@ -368,11 +390,15 @@ final class AppCoordinator: ObservableObject {
     private func restoreFromDisk() async {
         do {
             let state: PairingState = try await withCheckedThrowingContinuation { cont in
+                let box = ContinuationBox<PairingState>(continuation: cont)
                 pairingRepository.restore { state, error in
+                    if box.tryResume() == false { return }
                     if let error = error {
                         cont.resume(throwing: error)
+                    } else if let state = state {
+                        cont.resume(returning: state)
                     } else {
-                        cont.resume(returning: state!)
+                        cont.resume(throwing: PairingStartError.emptyResponse)
                     }
                 }
             }
@@ -391,11 +417,15 @@ final class AppCoordinator: ObservableObject {
             guard !Task.isCancelled else { return }
             do {
                 let state: PairingState = try await withCheckedThrowingContinuation { cont in
+                    let box = ContinuationBox<PairingState>(continuation: cont)
                     pairingRepository.refreshStatus(sessionId: sessionId) { state, error in
+                        if box.tryResume() == false { return }
                         if let error = error {
                             cont.resume(throwing: error)
+                        } else if let state = state {
+                            cont.resume(returning: state)
                         } else {
-                            cont.resume(returning: state!)
+                            cont.resume(throwing: PairingStartError.emptyResponse)
                         }
                     }
                 }
@@ -474,6 +504,49 @@ final class AppCoordinator: ObservableObject {
         #else
         return "iOS Device"
         #endif
+    }
+}
+
+// MARK: - Bridge crash guards
+
+/// Swift-side `CheckedContinuation` wrapper that makes the resume idempotent.
+/// Kotlin/Native's `(Result?, NSError?) -> Void` bridge can fire the callback
+/// twice in some edge cases (e.g. once with the value, once with a
+/// cancellation error). Resuming a continuation twice is a fatal `precondition`
+/// crash in Swift. The first resume wins; the second is silently dropped.
+///
+/// See verify mm-mobile audit 2026-08-12 (pairing crash on device).
+private final class ContinuationBox<T> {
+    private var continuation: CheckedContinuation<T, Error>?
+    private let lock = NSLock()
+
+    init(continuation: CheckedContinuation<T, Error>) {
+        self.continuation = continuation
+    }
+
+    /// Returns `true` if this is the first resume attempt; `false` if a
+    /// previous callback already consumed the continuation. The caller MUST
+    /// NOT call `continuation.resume(...)` again when this returns `false`.
+    func tryResume() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if continuation == nil { return false }
+        continuation = nil
+        return true
+    }
+}
+
+/// Error thrown when the Kotlin callback fires with neither a state nor an
+/// error. Usually means the sealed-class conversion to Swift failed inside
+/// the bridge — see `startPairing()` for the full incident.
+private enum PairingStartError: LocalizedError {
+    case emptyResponse
+
+    var errorDescription: String? {
+        switch self {
+        case .emptyResponse:
+            return "Pairing backend returned an empty response"
+        }
     }
 }
 
