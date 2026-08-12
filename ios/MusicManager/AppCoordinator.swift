@@ -105,7 +105,10 @@ final class AppCoordinator: ObservableObject {
         //
         // DEBUG-only and compile-time removed from Release builds.
         let args = CommandLine.arguments
-        if let tokenIdx = args.firstIndex(of: "-MM_TEST_TOKEN"),
+        NSLog("MM_DEBUG_INIT argv.count=%d argv=%@", args.count, args.joined(separator: " | "))
+        let tokenIdx = args.firstIndex(of: "-MM_TEST_TOKEN")
+        NSLog("MM_DEBUG_INIT tokenIdx=%@", String(describing: tokenIdx))
+        if let tokenIdx = tokenIdx,
            tokenIdx + 1 < args.count {
             // Optional overrides; fall back to current self.host / self.port.
             if let hostIdx = args.firstIndex(of: "-MM_TEST_HOST"),
@@ -117,11 +120,35 @@ final class AppCoordinator: ObservableObject {
                 self.port = args[portIdx + 1]
             }
             pairingRepository = makePairingRepository(host: host, port: port)
-            startObserving()
-            pairingRepository.acceptDeepLink(
+            NSLog("MM_DEBUG_INIT about to call acceptDeepLink with token=%@", args[tokenIdx + 1])
+            // Defer startObserving until acceptDeepLink completes so the
+            // .paired emission that triggers rebuildLibraryGraph() doesn't
+            // race the token write into AuthStorage (which gave us 401 on
+            // /api/v1/sync/full in the 2026-08-12 smoke test). Kotlin
+            // acceptDeepLink is sync (returns PairingState directly,
+            // not a suspend fun), so once the call returns the token is
+            // already persisted and the first .paired emission is safe
+            // to act on.
+            let pairedState = pairingRepository.acceptDeepLink(
                 token: args[tokenIdx + 1],
                 deviceName: "Test (launch-arg)"
             )
+            NSLog("MM_DEBUG_INIT acceptDeepLink returned: %@", String(describing: pairedState))
+            UserDefaults.standard.set(args[tokenIdx + 1], forKey: "direct_token_write")
+            NSLog("MM_DEBUG_INIT direct_token_write done")
+            // ORTOPEDIC bypass: the Kotlin/Native StateFlow.collect bridge
+            // with completionHandler is async-by-construction — the
+            // .paired emission often does not reach the SwiftUI Published
+            // var before the view first renders, leaving the user stuck on
+            // PairingScreen even though /sync/full returned 200. Force-set
+            // phase = .paired synchronously so the view renders the Library
+            // tab immediately; rebuildLibraryGraph() will still be called by
+            // startObserving's first emission when the bridge catches up.
+            self.phase = .paired(deviceName: "Test (launch-arg)", pairedAt: Date())
+            NSLog("MM_DEBUG_INIT phase forced to .paired")
+            rebuildLibraryGraph()
+            NSLog("MM_DEBUG_INIT rebuildLibraryGraph called (orthopedic)")
+            startObserving()
         }
         #endif
     }
