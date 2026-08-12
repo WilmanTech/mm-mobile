@@ -378,9 +378,6 @@ final class AppCoordinator: ObservableObject {
                 }
             } catch {
                 // Transient polling failure — keep polling until the budget runs out.
-                // The Kotlin refreshStatus wrapper added in Phase 4.A.7 swallows
-                // these internally now; this catch is defence-in-depth for any
-                // path that still propagates.
             }
         }
         // 60s budget exhausted without a terminal state. Previously we only
