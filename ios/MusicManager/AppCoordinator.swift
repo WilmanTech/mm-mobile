@@ -277,10 +277,19 @@ final class AppCoordinator: ObservableObject {
         guard url.host == "pair" else { return }
         let comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
         let items = comps?.queryItems ?? []
-        let dict = Dictionary(uniqueKeysWithValues: items.map { ($0.name, $0.value ?? "") })
+        let dict = Dictionary(uniqueKeysWithValues: items.map { ($0.name, ($0.value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)) })
 
         if let token = dict["token"], !token.isEmpty {
-            let deviceName = dict["device"].flatMap { $0.isEmpty ? nil : $0 }
+            // URLComponents decoding can leave non-printable / encoded
+            // artifacts at the boundaries of query values (e.g. trailing
+            // `%20` from a hand-written URL or a ` ` slipped in by
+            // a clipboard paste). Trim defensively so a stray space
+            // doesn't silently corrupt the persisted bearer and 401
+            // on the first /api/v1/sync/* request.
+            // Verify mm-mobile audit 2026-08-12.
+            let deviceName = dict["device"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .nilIfEmpty()
                 ?? "Paired via QR"
             pairingRepository.acceptDeepLink(token: token, deviceName: deviceName)
         }
@@ -369,9 +378,20 @@ final class AppCoordinator: ObservableObject {
                 }
             } catch {
                 // Transient polling failure — keep polling until the budget runs out.
+                // The Kotlin refreshStatus wrapper added in Phase 4.A.7 swallows
+                // these internally now; this catch is defence-in-depth for any
+                // path that still propagates.
             }
         }
+        // 60s budget exhausted without a terminal state. Previously we only
+        // surfaced this as lastError text while leaving phase = .pending,
+        // which made the UI sit on "Waiting for desktop…" indefinitely and
+        // required a relaunch to recover. Now we transition to a terminal
+        // error phase so the user sees the failed pairing screen + retry
+        // path automatically.
+        // Verify mm-mobile audit 2026-08-12.
         lastError = "Pairing timed out waiting for confirmation"
+        phase = .error(message: lastError ?? "Pairing timed out")
     }
 
     /// Kotlin/Native exposes each sealed-subclass as a separate Swift class
@@ -458,6 +478,17 @@ private final class PairingStateCollector: NSObject, Kotlinx_coroutines_coreFlow
             onEmit(state)
         }
         completionHandler(nil)
+    }
+}
+
+/// Returns nil when the string is empty / whitespace-only after trimming.
+/// Used by `handleDeepLink` to coerce the optional `device` query param
+/// into the same "no device name → fallback to default" semantics the
+/// Kotlin repository applies.
+extension String {
+    func nilIfEmpty() -> String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 
