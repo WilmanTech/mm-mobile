@@ -80,7 +80,18 @@ class PairingRepository(
         if (current !is PairingState.Pending) return current
         if (current.sessionId != sessionId) return current
 
-        val status = api.pairingStatus(sessionId)
+        val status = try {
+            api.pairingStatus(sessionId)
+        } catch (e: Throwable) {
+            // Transient network blip during the 2s poll — surface as
+            // a retryable error (no state change), NOT a propagation
+            // that would throw out of the caller's polling loop.
+            // Verify mm-mobile audit 2026-08-12.
+            return PairingState.Error(
+                sessionId = sessionId,
+                httpStatus = -1,
+            )
+        }
         val newState = when {
             !status.exists -> PairingState.Expired(sessionId)
             status.expired -> PairingState.Expired(sessionId)
