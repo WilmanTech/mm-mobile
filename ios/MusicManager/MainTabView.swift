@@ -19,9 +19,16 @@ import MusicManagerShared
 /// **Glass material** (Phase 4.A.2): on iOS 26 we apply `.glassEffect(...)`
 /// to the bar surface; on iOS < 26 we fall back to a flat
 /// `Color.mmBgSidebar` clip. Both branches share the same `Material`.
+///
+/// **Phase 3.B addition**: a `[NowPlayingMiniView]` sits **above** the
+/// bottom-tab bar whenever the player engine has anything loaded.
+/// It disappears when `EngineState` is `.idle` or `.error`, matching
+/// the Android `NowPlayingMini` behavior. The `player` engine is
+/// created once in `RootView` and shared here.
 struct MainTabView: View {
 
     let graph: LibraryEntry.Graph
+    @ObservedObject var player: AvPlayerEngine
     @EnvironmentObject private var coordinator: AppCoordinator
 
     enum Tab: Hashable {
@@ -31,51 +38,60 @@ struct MainTabView: View {
     @State private var selection: Tab = .home
 
     var body: some View {
-        TabView(selection: $selection) {
-            HomeView(graph: graph)
-                .tabItem {
-                    Label("Inicio", systemImage: "house.fill")
-                }
-                .tag(Tab.home)
+        VStack(spacing: 0) {
+            // Phase 3.B: compact now-playing bar that appears above the
+            // tab bar whenever the player has loaded a track. The bar
+            // is `EmptyView` when the engine is idle/error so there's
+            // no visible gap.
+            NowPlayingMiniView(engine: player)
 
-            SearchView(graph: graph)
-                .tabItem {
-                    Label("Buscar", systemImage: "magnifyingglass")
-                }
-                .tag(Tab.search)
+            TabView(selection: $selection) {
+                HomeView(graph: graph)
+                    .tabItem {
+                        Label("Inicio", systemImage: "house.fill")
+                    }
+                    .tag(Tab.home)
 
-            LibraryScreen(graph: graph)
-                .tabItem {
-                    Label("Biblioteca", systemImage: "music.note.list")
-                }
-                .tag(Tab.library)
+                SearchView(graph: graph)
+                    .tabItem {
+                        Label("Buscar", systemImage: "magnifyingglass")
+                    }
+                    .tag(Tab.search)
 
-            SettingsView(graph: graph)
-                .tabItem {
-                    Label("Ajustes", systemImage: "gearshape.fill")
-                }
-                .tag(Tab.settings)
-        }
-        .tint(Color.mmAccentPrimary)
-        .modifier(MMTabBarGlass())
-        .toolbar {
-            // Unpair remains a corner action — same affordance
-            // `PairedScreen` had.
-            ToolbarItem(placement: .topBarTrailing) {
-                Button(role: .destructive, action: coordinator.unpair) {
-                    Image(systemName: "rectangle.portrait.and.arrow.right")
-                }
-                .tint(Color.mmAccentPrimary)
+                LibraryScreen(graph: graph)
+                    .tabItem {
+                        Label("Biblioteca", systemImage: "music.note.list")
+                    }
+                    .tag(Tab.library)
+
+                SettingsView(graph: graph)
+                    .tabItem {
+                        Label("Ajustes", systemImage: "gearshape.fill")
+                    }
+                    .tag(Tab.settings)
             }
+            .tint(Color.mmAccentPrimary)
+            .modifier(MMTabBarGlass())
+            .toolbar {
+                // Unpair remains a corner action — same affordance
+                // `PairedScreen` had.
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(role: .destructive, action: coordinator.unpair) {
+                        Image(systemName: "rectangle.portrait.and.arrow.right")
+                    }
+                    .tint(Color.mmAccentPrimary)
+                }
+            }
+            // Persistent unpair gesture: 3-finger tap is a developer-only
+            // shortcut that mirrors the way Android's debug builds let
+            // QA bypass long-press menus. Disabled in Release.
+            #if DEBUG
+            .simultaneousGesture(TapGesture(count: 3).onEnded {
+                coordinator.unpair()
+            })
+            #endif
         }
-        // Persistent unpair gesture: 3-finger tap is a developer-only
-        // shortcut that mirrors the way Android's debug builds let
-        // QA bypass long-press menus. Disabled in Release.
-        #if DEBUG
-        .simultaneousGesture(TapGesture(count: 3).onEnded {
-            coordinator.unpair()
-        })
-        #endif
+        .background(Color.mmBackground)
     }
 }
 
