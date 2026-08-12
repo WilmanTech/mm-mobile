@@ -238,6 +238,25 @@ final class AppCoordinator: ObservableObject {
         phase = .idle
     }
 
+    #if DEBUG
+    /// DEBUG-only bypass for visual / smoke verification: paste a bearer
+    /// obtained from `/api/pairing/start` (returns `{session_id, token,
+    /// code, expires_in}`) and the app transitions into the `.paired`
+    /// state without going through the QR / `mm://` round-trip.
+    ///
+    /// The token is written into the same `AuthStorage` the real deep-link
+    /// path uses, so `libraryGraph` is rebuilt on the next `state`
+    /// emission and `syncFull()` runs against the live backend.
+    ///
+    /// Debug-only; compile-time removed from Release.
+    func acceptTestToken(_ token: String) {
+        pairingRepository.acceptDeepLink(
+            token: token,
+            deviceName: "Test (PairingScreen bypass)"
+        )
+    }
+    #endif
+
     /// Handle an `mm://pair?session=...&token=...&code=...&host=...&port=...` URL.
     /// The desktop sends this after the user scans a QR code.
     ///
