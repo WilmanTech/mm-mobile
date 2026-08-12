@@ -94,19 +94,25 @@ final class AppCoordinator: ObservableObject {
         // Test deep-link bypass — `simctl openurl` to a custom scheme triggers
         // iOS's "¿Abrir en MusicManager?" consent prompt the first time per
         // session, which blocks automated verification. Launching the app with
-        // `xcrun simctl launch booted bundle --MM_TEST_TOKEN=***` skips the URL
-        // round-trip and writes the bearer directly into the same
-        // `AuthStorage` the real `acceptDeepLink` path uses. DEBUG-only and
-        // compile-time removed from Release builds.
+        // `xcrun simctl launch booted bundle -MM_TEST_TOKEN ***` skips the URL
+        // round-trip and writes the bearer directly into the same `AuthStorage`
+        // the real `acceptDeepLink` path uses.
+        //
+        // We use a single-dash prefix (not `--`) because `simctl launch` treats
+        // double-dash arguments as its own flags and silently drops them before
+        // the bundle's argv is constructed. Single-dash `-MM_TEST_TOKEN=***`
+        // passes through to CommandLine.arguments verbatim.
+        //
+        // DEBUG-only and compile-time removed from Release builds.
         let args = CommandLine.arguments
-        if let tokenIdx = args.firstIndex(of: "--MM_TEST_TOKEN"),
+        if let tokenIdx = args.firstIndex(of: "-MM_TEST_TOKEN"),
            tokenIdx + 1 < args.count {
             // Optional overrides; fall back to current self.host / self.port.
-            if let hostIdx = args.firstIndex(of: "--MM_TEST_HOST"),
+            if let hostIdx = args.firstIndex(of: "-MM_TEST_HOST"),
                hostIdx + 1 < args.count {
                 self.host = args[hostIdx + 1]
             }
-            if let portIdx = args.firstIndex(of: "--MM_TEST_PORT"),
+            if let portIdx = args.firstIndex(of: "-MM_TEST_PORT"),
                portIdx + 1 < args.count {
                 self.port = args[portIdx + 1]
             }

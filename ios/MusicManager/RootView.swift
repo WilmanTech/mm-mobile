@@ -1,12 +1,17 @@
 import SwiftUI
 
 /// Top-level view that switches between the pairing screen and the post-pair
-/// "you are connected" placeholder. Real library / search / now-playing tabs
-/// come in later phases (Phase 1+ iOS parity); for the MVP smoke we just need
-/// to prove the pairing round-trip works end-to-end.
+/// tab bar (Phase 4.A.5 iOS parity with Android's `MusicManagerRoot`).
+///
+/// Layered as in the Android scaffold:
+///   1. Pairing gate — `PairingScreen` until `PairingState.Paired`.
+///   2. `MainTabView` once `paired` AND `LibraryEntry.Graph` is
+///      available (the brief window before the graph is built still
+///      shows the Phase 4.A.4 `PairedScreen` placeholder so the
+///      transition isn't a flash of nothing).
 ///
 /// When `coordinator.showPreview` is true (typically set via the
-/// MM_VISUAL_REVIEW=1 launch argument in DEBUG), the root renders
+/// `MM_VISUAL_REVIEW=1` launch argument in DEBUG), the root renders
 /// `LibraryMockScreen` instead so designers / reviewers can land
 /// directly on the library preview without going through pairing.
 struct RootView: View {
@@ -24,7 +29,11 @@ struct RootView: View {
                 case .pending:
                     PairingScreen()
                 case .paired:
-                    PairedScreen()
+                    if let graph = coordinator.libraryGraph {
+                        MainTabView(graph: graph)
+                    } else {
+                        PairedScreen()
+                    }
                 }
             }
         }
