@@ -24,7 +24,7 @@
 		B594EE3233FBB14176F89863 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 7BCA74AF02C261AAF7D0A581 /* Assets.xcassets */; };
 		C2B94EC874787F0F457607F2 /* LibraryMockScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 923FAED8A59080225B7F9B8F /* LibraryMockScreen.swift */; };
 		E1EEF09487773043A8725C3E /* MusicManagerTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6570095863DCA1CD0845C6D5 /* MusicManagerTheme.swift */; };
-		E2C7AB82B1DA7005EF306877 /* NowPlayingMiniView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A37B440C965D9FB2749C2DF6 /* NowPlayingMiniView.swift */; };
+		E2C7AB82B1DA7005EF306877 /* NowPlayingMiniView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4E2C7AB12DE3405FF90A123 /* NowPlayingMiniView.swift */; };
 		EE5BC0A4C3F1A2B3D4E5F601 /* SearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBD5F9E9C4AAC88DC511CA61 /* SearchView.swift */; };
 /* End PBXBuildFile section */
 
@@ -51,7 +51,7 @@
 		D1AA84111DB27A1ECD77F603 /* AppCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCoordinator.swift; sourceTree = "<group>"; };
 		DBD5F9E9C4AAC88DC511CA61 /* SearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchView.swift; sourceTree = "<group>"; };
 		E2C0ED7439FCBD07C2F34C44 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
-		A37B440C965D9FB2749C2DF6 /* NowPlayingMiniView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingMiniView.swift; sourceTree = "<group>"; };
+		B4E2C7AB12DE3405FF90A123 /* NowPlayingMiniView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingMiniView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -87,7 +87,7 @@
 				2BAC7827462AF4EE690AC40D /* RootView.swift */,
 				DBD5F9E9C4AAC88DC511CA61 /* SearchView.swift */,
 				E2C0ED7439FCBD07C2F34C44 /* SettingsView.swift */,
-				A37B440C965D9FB2749C2DF6 /* NowPlayingMiniView.swift */,
+				B4E2C7AB12DE3405FF90A123 /* NowPlayingMiniView.swift */,
 			);
 			path = MusicManager;
 			sourceTree = "<group>";
