@@ -359,6 +359,32 @@ class PairingRepositoryTest {
         assertTrue(state is PairingState.Pending)
         assertEquals("tok-x", (state as PairingState.Pending).token)
     }
+
+    /**
+     * Bridge crash guard: if /api/pairing/start throws (e.g. iOS Darwin
+     * engine rejecting local-network requests with NSError -1009 "Local
+     * network prohibited"), PairingRepository.start() must NOT propagate
+     * the raw exception out of the suspend fun — the KMP bridge can't
+     * convert it to NSError and would SIGABRT the app. Instead it must
+     * transition to PairingState.Error so the Swift UI lands on the
+     * error screen.
+     */
+    @Test
+    fun `start converts thrown exception to Error state (no exception escapes)`() = runTest {
+        val authStorage = InMemoryTokenStore()
+        val handler: MockRequestHandler = {
+            throw java.io.IOException("Local network prohibited (NSURLErrorDomain -1009)")
+        }
+        val api = MusicManagerApi(mockClient(handler), baseUrl = "http://test")
+        val repo = PairingRepository(api, authStorage, now = { fakeNow })
+
+        // Must NOT throw — must return an Error state instead.
+        val state = repo.start()
+        assertTrue(state is PairingState.Error, "expected Error state, got $state")
+        assertEquals(-1, (state as PairingState.Error).httpStatus)
+        // Token was never persisted because the request failed.
+        assertNull(authStorage.load())
+    }
 }
 
 /** In-memory TokenStore for tests. */

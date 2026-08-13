@@ -228,11 +228,18 @@ final class AppCoordinator: ObservableObject {
     /// once with an "operation cancelled" error). The first resume
     /// wins; the second is silently dropped.
     func startPairing() async {
+        NSLog("MM_DEBUG startPairing BEGIN host=%@ port=%@", host, port)
         do {
             let state: PairingState = try await withCheckedThrowingContinuation { cont in
                 let box = ContinuationBox<PairingState>(continuation: cont)
                 pairingRepository.start(deviceType: "ios") { state, error in
-                    if box.tryResume() == false { return }
+                    NSLog("MM_DEBUG startPairing callback state=%@ error=%@",
+                          state.map { "\($0)" } ?? "nil",
+                          error.map { "\($0)" } ?? "nil")
+                    if box.tryResume() == false {
+                        NSLog("MM_DEBUG startPairing callback DROPPED (continuation already resumed)")
+                        return
+                    }
                     if let error = error {
                         cont.resume(throwing: error)
                     } else if let state = state {
@@ -242,12 +249,34 @@ final class AppCoordinator: ObservableObject {
                     }
                 }
             }
+            NSLog("MM_DEBUG startPairing state returned = %@", "\(state)")
+            // If Kotlin returned an Error state (e.g. our bridge crash
+            // guard converted a DarwinHttpRequestException to a
+            // PairingState.Error with httpStatus=-1), surface it in
+            // `lastError` so the PairingScreen's errorBanner shows it.
+            // The `phase = .error(...)` mapping below also kicks in but
+            // the screen's UI only renders the banner when lastError
+            // != nil — both need to be set.
+            if let errorState = state as? PairingStateError {
+                if errorState.httpStatus == -1 {
+                    lastError = "Cannot reach backend at \(host):\(port). Check that MusicManager is running and that this iPhone is on the same WiFi network. (Local network access may be blocked — go to Settings → MusicManager → Local Network and enable it.)"
+                } else {
+                    lastError = "Pairing failed: HTTP \(errorState.httpStatus)"
+                }
+            }
             phase = Self.phase(from: state)
-            await pollUntilConfirmed()
+            // Only poll if we actually got a pending state — otherwise the
+            // poll loop would no-op on the .error/.idle guard but we'd
+            // skip it explicitly for clarity.
+            if case .pending = phase {
+                await pollUntilConfirmed()
+            }
         } catch {
+            NSLog("MM_DEBUG startPairing CATCH error=%@", "\(error)")
             lastError = "Start failed: \(error.localizedDescription)"
             phase = .error(message: lastError ?? "unknown")
         }
+        NSLog("MM_DEBUG startPairing END phase=%@ lastError=%@", "\(phase)", lastError ?? "nil")
     }
 
     /// User typed the 4-word code on the desktop. We push it to /api/pairing/confirm.

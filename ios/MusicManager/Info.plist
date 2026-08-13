@@ -81,5 +81,11 @@
 			</dict>
 		</dict>
 	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>MusicManager needs to talk to the MusicManager server running on your local network so it can stream your library, fetch metadata, and pair with the desktop app.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_mmbackend._tcp</string>
+	</array>
 </dict>
 </plist>
