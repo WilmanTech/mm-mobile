@@ -370,10 +370,10 @@ class PairingRepositoryTest {
      * error screen.
      */
     @Test
-    fun `start converts thrown exception to Error state (no exception escapes)`() = runTest {
+    fun `start converts thrown exception to Error state and no exception escapes`() = runTest {
         val authStorage = InMemoryTokenStore()
-        val handler: MockRequestHandler = {
-            throw java.io.IOException("Local network prohibited (NSURLErrorDomain -1009)")
+        val handler: MockRequestHandler = { _ ->
+            throw RuntimeException("Local network prohibited (NSURLErrorDomain -1009)")
         }
         val api = MusicManagerApi(mockClient(handler), baseUrl = "http://test")
         val repo = PairingRepository(api, authStorage, now = { fakeNow })
