@@ -125,8 +125,31 @@ struct LibraryScreen: View {
             statTile(value: "\(tracks.count)", label: "tracks", systemImage: "music.note")
             statTile(value: "\(uniqueAlbumCount)", label: "albums", systemImage: "rectangle.stack")
             statTile(value: "\(artists.count)", label: "artists", systemImage: "music.mic")
+            // Phase 3.B+: shuffle the current filtered list. Mirrors
+            // Spotify's "shuffle play" button on the home screen.
+            Button {
+                shuffleAndPlayAll()
+            } label: {
+                VStack(alignment: .leading, spacing: 6) {
+                    Image(systemName: "shuffle.circle.fill")
+                        .font(.callout)
+                        .foregroundStyle(Color.mmAccentPrimary)
+                    Text("Shuffle")
+                        .font(.title2.weight(.semibold))
+                        .foregroundStyle(Color.mmPrimaryText)
+                    Text("all tracks")
+                        .font(.caption)
+                        .foregroundStyle(Color.mmSecondaryText)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.mmBgCard)
+                .clipShape(RoundedRectangle(cornerRadius: MusicManagerTheme.cornerRadius))
+            }
+            .buttonStyle(.plain)
+            .disabled(filteredTracks.isEmpty)
         }
-        .frame(maxWidth: .infinity)
     }
 
     private var uniqueAlbumCount: Int {
@@ -237,13 +260,27 @@ struct LibraryScreen: View {
                         // is String (because the player URL embeds it as
                         // /api/stream/{id}). Convert at the wire boundary.
                         TrackRow(track: track) {
-                            player.play(track: PlayableTrack(
-                                id: String(track.id),
-                                title: track.title,
-                                artistName: track.artistName,
-                                albumTitle: track.albumTitle,
-                                albumId: String(track.albumId),
-                            ))
+                            // Phase 3.B+ queue: tapping a row starts
+                            // playback of that track AND seeds the
+                            // queue with the filtered list so
+                            // next/previous walk the visible library
+                            // rather than just swapping single tracks.
+                            // The SwiftTrack.id is Int64 (SQLDelight
+                            // row id) but PlayableTrack.id is String
+                            // (because the player URL embeds it as
+                            // /api/stream/{id}). Convert at the wire
+                            // boundary.
+                            let queue = playableQueue(from: filteredTracks)
+                            player.play(
+                                track: PlayableTrack(
+                                    id: String(track.id),
+                                    title: track.title,
+                                    artistName: track.artistName,
+                                    albumTitle: track.albumTitle,
+                                    albumId: String(track.albumId),
+                                ),
+                                in: queue,
+                            )
                         }
                         if idx < filteredTracks.count - 1 {
                             Divider()
@@ -291,6 +328,37 @@ struct LibraryScreen: View {
         .frame(maxWidth: .infinity)
         .background(Color.mmBgCard)
         .clipShape(RoundedRectangle(cornerRadius: MusicManagerTheme.cornerRadius))
+    }
+
+    // MARK: - Playback helpers (Phase 3.B+)
+
+    /// Map SwiftTrack rows into the player's `PlayableTrack` shape.
+    /// Centralised here so the row-tap closure and `shuffleAndPlayAll`
+    /// stay in sync as the row schema evolves.
+    private func playableQueue(from rows: [SwiftTrack]) -> [PlayableTrack] {
+        rows.map {
+            PlayableTrack(
+                id: String($0.id),
+                title: $0.title,
+                artistName: $0.artistName,
+                albumTitle: $0.albumTitle,
+                albumId: String($0.albumId),
+            )
+        }
+    }
+
+    /// Shuffle the current filtered list and start playback. Honours
+    /// the search and artist-filter chips above the list — tapping
+    /// "Shuffle" with an artist selected plays only that artist's
+    /// tracks. The engine's `isShuffled` is also turned on so
+    /// `next()` keeps surprising the user.
+    private func shuffleAndPlayAll() {
+        let rows = filteredTracks.shuffled()
+        guard !rows.isEmpty else { return }
+        let queue = playableQueue(from: rows)
+        let first = queue[0]
+        player.isShuffled = true
+        player.play(track: first, in: queue)
     }
 }
 
