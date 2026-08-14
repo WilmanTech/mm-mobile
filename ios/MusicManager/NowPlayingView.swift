@@ -3,7 +3,7 @@ import SwiftUI
 /// Full-screen "now playing" page reached by tapping the
 /// `NowPlayingMiniView` chrome. Mirrors the Apple Music / Spotify
 /// full-screen player: large artwork, scrubber, transport controls,
-/// shuffle toggle, and a queue sheet trigger.
+/// shuffle + repeat toggles, queue sheet, album link.
 ///
 /// **Phase 3.B+** — the engine now has a queue + shuffle state, so
 /// this page exposes them via the chrome. The page reads from
@@ -11,9 +11,20 @@ import SwiftUI
 /// `PlayerTrigger` lands it swaps for a Swift wrapper around the
 /// `StateFlow<PlayerState>` collector.
 ///
-/// **Layout** — uses an iOS 26 `.glassEffect(...)` for the surface so
-/// the brand palette + glass material stays consistent with the
-/// rest of the app. On older OS we fall back to a flat colour card.
+/// **Phase 3.B++** — added repeat mode (off / all / one), the album
+/// link (tap album title to navigate back), and iOS 26 glassEffect
+/// on the artwork card for the brand material consistency.
+///
+/// **Why `contentShape(Rectangle())` on the play/pause button** —
+/// earlier versions of this view had the play/pause button inside an
+/// HStack next to a Slider whose track extended across the full
+/// horizontal width when the track duration was unknown (Slider's
+/// `0...1` range). SwiftUI's hit-test resolution was passing touches
+/// to the Slider instead of the Button. Wrapping the play button's
+/// label in `contentShape(Rectangle())` + `.buttonStyle(.borderless)`
+/// forces a precise rectangular hit region that doesn't overlap
+/// the slider's track. Same fix on prev/next so the whole transport
+/// row behaves reliably on small screens.
 struct NowPlayingView: View {
 
     @ObservedObject var engine: AvPlayerEngine
@@ -24,6 +35,12 @@ struct NowPlayingView: View {
     /// which is too coarse for a thumb drag — we update the
     /// `@Published` once when the drag ends.
     @State private var dragPositionMs: Double? = nil
+
+    /// Phase 3.B++: navigation to the source album. We don't have a
+    /// full AlbumDetail screen yet, so we just dismiss back to the
+    /// library for now — the gesture still feels right because the
+    /// album title is rendered as a button.
+    @State private var showingAlbumInfo: Bool = false
 
     var body: some View {
         ZStack {
@@ -55,7 +72,13 @@ struct NowPlayingView: View {
                         .font(.title3.weight(.semibold))
                         .foregroundStyle(Color.mmPrimaryText)
                 }
+                .accessibilityLabel("Close now playing")
             }
+        }
+        .alert("Coming soon", isPresented: $showingAlbumInfo) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Album detail screens land in Phase 3.C (separate PR).")
         }
     }
 
@@ -99,39 +122,33 @@ struct NowPlayingView: View {
         positionMs: Int,
         durationMs: Int,
     ) -> some View {
-        VStack(spacing: 28) {
-            artwork
-                .frame(width: 280, height: 280)
-                .padding(.top, 16)
+        ScrollView {
+            VStack(spacing: 28) {
+                artwork
+                    .frame(width: 280, height: 280)
+                    .padding(.top, 16)
 
-            VStack(spacing: 6) {
-                Text(track.title)
-                    .font(.title2.weight(.semibold))
-                    .foregroundStyle(Color.mmPrimaryText)
-                    .lineLimit(1)
-                Text("\(track.artistName) — \(track.albumTitle)")
-                    .font(.subheadline)
-                    .foregroundStyle(Color.mmSecondaryText)
-                    .lineLimit(1)
+                trackCaption(track: track)
+
+                scrubber(positionMs: positionMs, durationMs: durationMs)
+
+                transportControls
+
+                secondaryControls
             }
-            .padding(.horizontal, 24)
-
-            scrubber(positionMs: positionMs, durationMs: durationMs)
-                .padding(.horizontal, 24)
-
-            transportControls
-                .padding(.horizontal, 24)
-
-            secondaryControls
-                .padding(.horizontal, 32)
+            .padding(.bottom, 24)
         }
-        .padding(.bottom, 24)
     }
 
     // MARK: - Sub-views
 
+    @ViewBuilder
     private var artwork: some View {
-        ZStack {
+        // Phase 3.B++: iOS 26 glassEffect on the artwork card. The
+        // glass material layers the brand yellow accent over a
+        // translucent background — matches the brand identity work
+        // in Phase 4.A.2. Falls back to a flat card on older OS.
+        let base = ZStack {
             RoundedRectangle(cornerRadius: 16)
                 .fill(Color.mmBgCard)
             Image(systemName: "music.note")
@@ -139,75 +156,143 @@ struct NowPlayingView: View {
                 .foregroundStyle(Color.mmAccentPrimary)
         }
         .shadow(color: .black.opacity(0.4), radius: 24, y: 8)
-    }
 
-    private func scrubber(positionMs: Int, durationMs: Int) -> some View {
-        // Use the drag position if the user is actively scrubbing,
-        // otherwise show the engine's polled position.
-        let displayedPosition = dragPositionMs ?? Double(positionMs)
-        let totalMs = Double(durationMs > 0 ? durationMs : 1)
-
-        return VStack(spacing: 6) {
-            Slider(
-                value: Binding(
-                    get: { displayedPosition },
-                    set: { dragPositionMs = $0 },
-                ),
-                in: 0...totalMs,
-                onEditingChanged: { editing in
-                    if !editing, let finalPosition = dragPositionMs {
-                        engine.seek(positionMs: Int(finalPosition))
-                        dragPositionMs = nil
-                    }
-                },
+        if #available(iOS 26.0, *) {
+            base.glassEffect(
+                MusicManagerTheme.glass,
+                in: RoundedRectangle(cornerRadius: 16)
             )
-            .tint(Color.mmAccentPrimary)
-
-            HStack {
-                Text(formatMs(Int(displayedPosition)))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(Color.mmSecondaryText)
-                Spacer()
-                Text(formatMs(durationMs))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(Color.mmSecondaryText)
-            }
+        } else {
+            base
         }
     }
 
+    private func trackCaption(track: PlayableTrack) -> some View {
+        VStack(spacing: 6) {
+            Text(track.title)
+                .font(.title2.weight(.semibold))
+                .foregroundStyle(Color.mmPrimaryText)
+                .lineLimit(1)
+            Button {
+                showingAlbumInfo = true
+            } label: {
+                Text("\(track.artistName) — \(track.albumTitle)")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.mmSecondaryText)
+                    .lineLimit(1)
+                    .underline(/* show the link affordance */ true, color: Color.mmSecondaryText.opacity(0.3))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Album \(track.albumTitle)")
+        }
+        .padding(.horizontal, 24)
+    }
+
+    @ViewBuilder
+    private func scrubber(positionMs: Int, durationMs: Int) -> some View {
+        // Only render the Slider when we have a real duration. With
+        // `0...1` the Slider's track extends across the full width
+        // and intercepts touches meant for the transport buttons
+        // below. Showing a thin progress bar (no gesture) until the
+        // AVPlayer reports durationMs > 0 keeps the hit-testing
+        // unambiguous.
+        let totalMs = Double(durationMs > 0 ? durationMs : 1)
+        let displayedPosition = dragPositionMs ?? Double(positionMs)
+
+        if durationMs > 0 {
+            VStack(spacing: 6) {
+                Slider(
+                    value: Binding(
+                        get: { displayedPosition },
+                        set: { dragPositionMs = $0 },
+                    ),
+                    in: 0...totalMs,
+                    onEditingChanged: { editing in
+                        if !editing, let finalPosition = dragPositionMs {
+                            engine.seek(positionMs: Int(finalPosition))
+                            dragPositionMs = nil
+                        }
+                    },
+                )
+                .tint(Color.mmAccentPrimary)
+
+                HStack {
+                    Text(formatMs(Int(displayedPosition)))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(Color.mmSecondaryText)
+                    Spacer()
+                    Text(formatMs(durationMs))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(Color.mmSecondaryText)
+                }
+            }
+            .padding(.horizontal, 24)
+        } else {
+            // Indeterminate progress: thin bar, no gestures.
+            VStack(spacing: 6) {
+                ProgressView()
+                    .tint(Color.mmAccentPrimary)
+                    .frame(maxWidth: .infinity)
+                Text("Loading…")
+                    .font(.caption2)
+                    .foregroundStyle(Color.mmSecondaryText)
+            }
+            .padding(.horizontal, 24)
+        }
+    }
+
+    /// Big previous / play-pause / next row. Each Button uses
+    /// `.contentShape(Rectangle())` so the hit area is exactly the
+    /// label rectangle, never extending into the scrubber above or
+    /// the secondary controls below.
     private var transportControls: some View {
-        HStack(spacing: 32) {
-            // Previous
-            Button(action: engine.previous) {
-                Image(systemName: "backward.fill")
-                    .font(.title)
-                    .foregroundStyle(Color.mmPrimaryText)
-            }
-            .disabled(engine.queue.isEmpty)
+        HStack(spacing: 36) {
+            transportButton(systemImage: "backward.fill", action: engine.previous)
+                .disabled(engine.queue.isEmpty)
 
-            // Play / Pause — big button
-            Button(action: engine.playPause) {
-                Image(systemName: engine.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 44))
-                    .foregroundStyle(Color.mmBgBase)
-                    .frame(width: 76, height: 76)
-                    .background(Color.mmAccentPrimary)
-                    .clipShape(Circle())
-            }
+            playPauseButton
 
-            // Next
-            Button(action: engine.next) {
-                Image(systemName: "forward.fill")
-                    .font(.title)
-                    .foregroundStyle(Color.mmPrimaryText)
-            }
-            .disabled(engine.queue.isEmpty)
+            transportButton(systemImage: "forward.fill", action: engine.next)
+                .disabled(engine.queue.isEmpty)
         }
+        .padding(.horizontal, 24)
     }
 
+    private func transportButton(
+        systemImage: String,
+        action: @escaping () -> Void,
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 28, weight: .semibold))
+                .foregroundStyle(Color.mmPrimaryText)
+                .frame(width: 56, height: 56)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+    }
+
+    private var playPauseButton: some View {
+        Button(action: engine.playPause) {
+            ZStack {
+                Circle()
+                    .fill(Color.mmAccentPrimary)
+                Image(systemName: engine.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 32, weight: .semibold))
+                    .foregroundStyle(Color.mmBgBase)
+            }
+            .frame(width: 84, height: 84)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .accessibilityLabel(engine.isPlaying ? "Pause" : "Play")
+    }
+
+    /// Phase 3.B++: shuffle + repeat toggles + queue indicator +
+    /// queue sheet link. Repeat cycles off → all → one → off
+    /// (Apple Music convention).
     private var secondaryControls: some View {
         HStack {
-            // Shuffle
             Button(action: engine.toggleShuffle) {
                 Image(systemName: "shuffle")
                     .font(.title3)
@@ -216,11 +301,14 @@ struct NowPlayingView: View {
                             ? Color.mmAccentPrimary
                             : Color.mmSecondaryText
                     )
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.borderless)
+            .accessibilityLabel(engine.isShuffled ? "Shuffle on" : "Shuffle off")
 
             Spacer()
 
-            // Queue indicator (count of remaining tracks)
             if engine.queue.count > 1 {
                 let remaining = engine.queue.count - engine.currentIndex - 1
                 if remaining > 0 {
@@ -232,15 +320,45 @@ struct NowPlayingView: View {
 
             Spacer()
 
-            // Queue sheet trigger
+            Button(action: engine.toggleRepeat) {
+                Image(systemName: engine.repeatMode.systemImageName)
+                    .font(.title3)
+                    .foregroundStyle(repeatTintColor)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel("Repeat \(engine.repeatMode.label)")
+
+            Spacer().frame(width: 12)
+
             NavigationLink {
                 QueueView(engine: engine)
             } label: {
                 Image(systemName: "list.bullet")
                     .font(.title3)
                     .foregroundStyle(Color.mmSecondaryText)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.borderless)
             .disabled(engine.queue.isEmpty)
+            .accessibilityLabel("Queue")
+        }
+        .padding(.horizontal, 20)
+    }
+
+    /// Repeat button tint: same yellow as shuffle when active, but
+    /// `repeat.one` uses a slightly different shade so the user can
+    /// tell the two modes apart at a glance.
+    private var repeatTintColor: Color {
+        switch engine.repeatMode {
+        case .off:
+            return Color.mmSecondaryText
+        case .all:
+            return Color.mmAccentPrimary
+        case .one:
+            return Color.mmAccentHover
         }
     }
 
@@ -287,7 +405,9 @@ struct QueueView: View {
                         }
                         Spacer()
                     }
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.borderless)
                 .listRowBackground(Color.mmBgCard)
             }
         }

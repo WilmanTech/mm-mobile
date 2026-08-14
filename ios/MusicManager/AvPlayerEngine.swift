@@ -61,6 +61,13 @@ final class AvPlayerEngine: ObservableObject {
     /// the queue — we just sample from it.
     @Published var isShuffled: Bool = false
 
+    /// Repeat state. Cycles off → all → one via `toggleRepeat()`.
+    /// - `.off`: `next()` returns at the end of the queue (no auto-advance).
+    /// - `.all`: `next()` loops back to index 0 at the end (default loop).
+    /// - `.one`: the current track restarts when it reaches the end,
+    ///   `next()` still advances to the next track on user input.
+    @Published var repeatMode: RepeatMode = .off
+
     private var avPlayer: AVPlayer?
     private var pollTimer: Timer?
     private var authStorage: AuthStorageBridge
@@ -116,9 +123,14 @@ final class AvPlayerEngine: ObservableObject {
         startPlayback(at: targetIndex)
     }
 
-    /// Skip to the next track in the queue. Honours shuffle: when
-    /// shuffle is on, picks a random unplayed track instead of the
-    /// linear successor. No-op when the queue is empty.
+    /// Skip to the next track in the queue. Honours shuffle and repeat:
+    /// - shuffle on: picks a random unplayed track instead of the
+    ///   linear successor.
+    /// - repeat off at the end of the queue: no-op (player stops).
+    /// - repeat all at the end: wraps to index 0.
+    /// - repeat one: handled in `trackDidFinish` (restarts the same
+    ///   track) — `next()` here still advances linearly.
+    /// No-op when the queue is empty.
     func next() {
         guard !queue.isEmpty else { return }
         let nextIndex: Int
@@ -127,6 +139,13 @@ final class AvPlayerEngine: ObservableObject {
             // ahead of the current one to avoid feeling random.
             let candidates = (0..<queue.count).filter { $0 != currentIndex }
             nextIndex = candidates.randomElement() ?? 0
+        } else if currentIndex >= queue.count - 1 && repeatMode == .all {
+            // Wrap to start when repeat is on.
+            nextIndex = 0
+        } else if currentIndex >= queue.count - 1 && repeatMode == .off {
+            // End of queue, repeat is off — stop playback instead of
+            // looping. The user can tap play/next manually to restart.
+            return
         } else {
             nextIndex = (currentIndex + 1) % queue.count
         }
@@ -193,6 +212,16 @@ final class AvPlayerEngine: ObservableObject {
     /// linear walk.
     func toggleShuffle() {
         isShuffled.toggle()
+    }
+
+    /// Cycle the repeat mode: off → all → one → off. Apple Music
+    /// convention — same three-way button, same order.
+    func toggleRepeat() {
+        switch repeatMode {
+        case .off: repeatMode = .all
+        case .all: repeatMode = .one
+        case .one: repeatMode = .off
+        }
     }
 
     // MARK: - Internal
@@ -292,6 +321,13 @@ final class AvPlayerEngine: ObservableObject {
             item === avPlayer?.currentItem,
             currentIndex >= 0
         else { return }
+        // Repeat-one restarts the current track from 0. The user
+        // can still hit next() to move on.
+        if repeatMode == .one {
+            avPlayer?.seek(to: .zero)
+            avPlayer?.play()
+            return
+        }
         next()
     }
 
@@ -386,5 +422,30 @@ struct AuthStorageBridge {
 
     func loadToken() -> String? {
         defaults.string(forKey: tokenKey)
+    }
+}
+
+/// Repeat mode for the queue walker. Cycles off → all → one via
+/// `AvPlayerEngine.toggleRepeat()`. The systemImageName / label
+/// helpers drive the chrome in NowPlayingView.
+enum RepeatMode: String, CaseIterable {
+    case off
+    case all
+    case one
+
+    var label: String {
+        switch self {
+        case .off: return "off"
+        case .all: return "all"
+        case .one: return "one"
+        }
+    }
+
+    var systemImageName: String {
+        switch self {
+        case .off: return "repeat"
+        case .all: return "repeat"
+        case .one: return "repeat.1"
+        }
     }
 }
