@@ -8,6 +8,11 @@ import SwiftUI
 /// **Phase 3.B** — Swift-only; reads from `AvPlayerEngine` directly.
 /// When the KMP `PlayerTrigger` lands, swap `AvPlayerEngine` for a
 /// thin Swift wrapper that collects from `StateFlow<PlayerState>`.
+///
+/// **Phase 3.B+** — wrapping the body in a `NavigationLink` so a
+/// tap on the chrome pushes the full-screen `NowPlayingView`. The
+/// play/pause button uses `.buttonStyle(.plain)` inside the link so
+/// its taps don't bubble up to the link itself.
 struct NowPlayingMiniView: View {
 
     @ObservedObject var engine: AvPlayerEngine
@@ -17,10 +22,20 @@ struct NowPlayingMiniView: View {
         case .idle, .error:
             EmptyView()
         case .loading(let track):
-            loadingRow(track: track)
+            NavigationLink {
+                NowPlayingView(engine: engine)
+            } label: {
+                loadingRow(track: track)
+            }
+            .buttonStyle(.plain)
         case .playing(let track, let positionMs, let durationMs),
              .paused(let track, let positionMs, let durationMs):
-            activeRow(track: track, positionMs: positionMs, durationMs: durationMs)
+            NavigationLink {
+                NowPlayingView(engine: engine)
+            } label: {
+                activeRow(track: track, positionMs: positionMs, durationMs: durationMs)
+            }
+            .buttonStyle(.plain)
         }
     }
 
