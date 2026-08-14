@@ -38,6 +38,16 @@ struct LibraryMockScreen: View {
 
     @State private var selectedArtist: Artist.ID? = "3" // Radiohead
     @State private var searchText: String = ""
+    @ObservedObject var player: AvPlayerEngine
+
+    /// The player engine is optional so the preview sheet in
+    /// `PairingScreen` (which is presented before the global engine is
+    /// constructed in `RootView`) can still instantiate this view.
+    /// When nil, the row taps are no-ops — useful for visual review
+    /// when audio playback isn't the point.
+    init(player: AvPlayerEngine? = nil) {
+        self.player = player ?? AvPlayerEngine(authStorage: AuthStorageBridge())
+    }
 
     private var filteredTracks: [Track] {
         let pool: [Track]
@@ -256,7 +266,14 @@ struct LibraryMockScreen: View {
             } else {
                 VStack(spacing: 0) {
                     ForEach(Array(tracks.enumerated()), id: \.element.id) { idx, track in
-                        TrackRow(track: track)
+                        TrackRow(track: track) {
+                            player.play(track: PlayableTrack(
+                                id: track.id,
+                                title: track.title,
+                                artistName: track.artistName,
+                                albumTitle: track.albumTitle,
+                            ))
+                        }
                         if idx < tracks.count - 1 {
                             Divider()
                                 .background(Color.mmTextDisabled.opacity(0.2))
@@ -307,6 +324,12 @@ struct LibraryMockScreen: View {
 
 private struct TrackRow: View {
     let track: Track
+    let onTap: () -> Void
+
+    init(track: Track, onTap: @escaping () -> Void = {}) {
+        self.track = track
+        self.onTap = onTap
+    }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -338,6 +361,8 @@ private struct TrackRow: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+        .contentShape(Rectangle())
+        .onTapGesture { onTap() }
     }
 
     private var trackArtwork: some View {
@@ -438,5 +463,5 @@ extension Track {
 }
 
 #Preview {
-    LibraryMockScreen()
+    LibraryMockScreen(player: AvPlayerEngine(authStorage: AuthStorageBridge()))
 }

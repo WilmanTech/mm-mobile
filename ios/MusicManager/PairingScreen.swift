@@ -22,6 +22,10 @@ struct PairingScreen: View {
 
     @EnvironmentObject private var coordinator: AppCoordinator
     @State private var showPreview = false
+    #if DEBUG
+    @State private var debugToken: String = ""
+    @State private var showingTokenField: Bool = false
+    #endif
 
     var body: some View {
         NavigationStack {
@@ -63,8 +67,87 @@ struct PairingScreen: View {
             .sheet(isPresented: $showPreview) {
                 LibraryMockScreen()
             }
+            #if DEBUG
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showingTokenField = true
+                    } label: {
+                        Image(systemName: "ladybug")
+                            .foregroundStyle(Color.mmAccentPrimary)
+                    }
+                    .accessibilityLabel("Debug — paste test token")
+                }
+            }
+            .sheet(isPresented: $showingTokenField) {
+                #if DEBUG
+                debugTokenSheet
+                #endif
+            }
+            #endif
         }
     }
+
+    #if DEBUG
+    /// DEBUG-only modal — paste a bearer from `/api/pairing/start`
+    /// (the response includes `token`) and the app transitions into
+    /// `.paired` without going through the QR round-trip. Mirrors
+    /// the launch-arg path that `simctl launch ... -MM_TEST_TOKEN=***`
+    /// is supposed to provide but which the iOS 26 simctl
+    /// `simctl launch` argv wrapper no longer forwards. Sourced from
+    /// the same `AuthStorage` so `libraryGraph` builds + `syncFull`
+    /// runs against the live backend exactly like a real pair.
+    private var debugTokenSheet: some View {
+        NavigationStack {
+            ZStack {
+                Color.mmBackground.ignoresSafeArea()
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("Debug — paste bearer")
+                        .font(.headline)
+                        .foregroundStyle(Color.mmPrimaryText)
+                    Text("Run `curl -X POST http://\(coordinator.host):\(coordinator.port)/api/pairing/start -H 'Content-Type: application/json' -d '{\"device_type\":\"ios\"}'`, copy the `token` field, paste below.")
+                        .font(.caption)
+                        .foregroundStyle(Color.mmSecondaryText)
+                    TextField("bearer from /api/pairing/start", text: $debugToken)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .foregroundStyle(Color.mmPrimaryText)
+                        .padding(10)
+                        .background(Color.mmBgCard)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    Button {
+                        let trimmed = debugToken.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !trimmed.isEmpty else { return }
+                        coordinator.acceptTestToken(trimmed)
+                        showingTokenField = false
+                        debugToken = ""
+                    } label: {
+                        Text("Pair (skip QR)")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .foregroundStyle(Color.mmBgBase)
+                            .background(Color.mmAccentPrimary)
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(debugToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    Spacer()
+                }
+                .padding(20)
+            }
+            .navigationTitle("Debug")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Close") { showingTokenField = false }
+                        .foregroundStyle(Color.mmAccentPrimary)
+                }
+            }
+        }
+        .presentationDetents([.medium])
+    }
+    #endif
 
     // MARK: - Sections
 

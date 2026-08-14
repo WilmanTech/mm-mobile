@@ -4,6 +4,7 @@ import android.content.Context
 import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import com.wtm.musicmanager.data.LibraryRepository
 import com.wtm.musicmanager.data.SqlDelightLibraryRepository
+import com.wtm.musicmanager.data.SqlDelightSyncUpsertQueries
 import com.wtm.musicmanager.data.SyncCoordinator
 import com.wtm.musicmanager.data.SyncTrigger
 import com.wtm.musicmanager.data.SyncUpsertQueries

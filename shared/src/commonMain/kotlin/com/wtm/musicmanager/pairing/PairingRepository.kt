@@ -54,7 +54,32 @@ class PairingRepository(
     suspend fun start(
         deviceType: String? = "mobile",
     ): PairingState {
-        val response = api.startPairing(PairingStartRequest(deviceType = deviceType))
+        val response = try {
+            api.startPairing(PairingStartRequest(deviceType = deviceType))
+        } catch (e: Throwable) {
+            // Bridge crash guard (verify mm-mobile audit 2026-08-13): Ktor's
+            // Darwin engine throws `DarwinHttpRequestException` when the
+            // iOS device rejects a local-network request (NSError -1009
+            // "Local network prohibited"). That exception is NOT declared
+            // in Ktor's @Throws signature, so when this suspend fun is
+            // bridged to Swift and back into a callback the KMP runtime
+            // can't propagate it as NSError — it logs:
+            //
+            //   "Exception doesn't match @Throws-specified class list and
+            //    thus isn't propagated from Kotlin to Objective-C/Swift
+            //    as NSError. It is considered unexpected and unhandled
+            //    instead. Program will be terminated."
+            //
+            // and SIGABRTs the app. By catching here we always invoke the
+            // completion handler with a valid PairingState.Error, so the
+            // Swift UI lands on the error screen instead of crashing.
+            val errorState = PairingState.Error(
+                sessionId = "",
+                httpStatus = -1,
+            )
+            _state.value = errorState
+            return errorState
+        }
         // Persist token immediately so a backend restart mid-pairing
         // doesn't lose the credential — when /status reports confirmed,
         // we already have it.
@@ -80,7 +105,18 @@ class PairingRepository(
         if (current !is PairingState.Pending) return current
         if (current.sessionId != sessionId) return current
 
-        val status = api.pairingStatus(sessionId)
+        val status = try {
+            api.pairingStatus(sessionId)
+        } catch (e: Throwable) {
+            // Transient network blip during the 2s poll — surface as
+            // a retryable error (no state change), NOT a propagation
+            // that would throw out of the caller's polling loop.
+            // Verify mm-mobile audit 2026-08-12.
+            return PairingState.Error(
+                sessionId = sessionId,
+                httpStatus = -1,
+            )
+        }
         val newState = when {
             !status.exists -> PairingState.Expired(sessionId)
             status.expired -> PairingState.Expired(sessionId)

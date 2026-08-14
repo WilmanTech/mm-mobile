@@ -37,11 +37,41 @@ final class AppCoordinator: ObservableObject {
     @Published var lastError: String?
     @Published var showPreview: Bool = false
 
+    /// Library graph wired by Phase 4.A.4 — populated the moment the app
+    /// transitions into `.paired` and reset on `unpair()`. Swift views
+    /// observe this `Optional` to decide whether to render the real
+    /// `LibraryScreen` (graph != nil) or the post-pairing placeholder
+    /// (graph == nil while `syncFull` is in flight).
+    @Published private(set) var libraryGraph: LibraryEntry.Graph?
+
+    /// Persistent bearer-token storage, built once and shared by both the
+    /// pairing layer and the library layer. Constructing it through the
+    /// Kotlin `TokenStore.from(storage:)` factory ensures the bearer set
+    /// by `pairingRepository.acceptDeepLink(token:)` is the exact same
+    /// token the library's `MusicManagerApi` reads on its authenticated
+    /// requests — without this sharing, the first `/api/v1/sync/full`
+    /// after pairing would 401.
+    ///
+    /// `DefaultAuthStorage_iosKt.defaultAuthStorage()` is the iOS top-level
+    /// `actual fun defaultAuthStorage()` from `DefaultAuthStorage.ios.kt`.
+    /// Kotlin/Native exposes top-level `expect`/`actual` functions as a
+    /// Swift class named `<FileName>_<Platform>Kt` with the original name
+    /// as a static method.
+    ///
+    /// Both the `AuthStorage` (the persistent backing) and the
+    /// `TokenStore` (the read/write facade the Kotlin code uses) are
+    /// constructed once and shared. `PairingEntry.make(...)` builds its
+    /// own `TokenStore` internally from the same backing store via the
+    /// Kotlin `PairingEntry` factory — so pairing writes go through the
+    /// same store the library API reads from.
+    private let authStorage: AuthStorage = DefaultAuthStorage_iosKt.defaultAuthStorage()
+
     private lazy var pairingRepository: PairingRepository = {
         makePairingRepository(host: host, port: port)
     }()
 
     private var stateObserverTask: Task<Void, Never>?
+    private var syncTask: Task<Void, Never>?
 
     init() {
         startObserving()
@@ -60,22 +90,88 @@ final class AppCoordinator: ObservableObject {
                 self?.showPreview = true
             }
         }
+
+        // Test deep-link bypass — `simctl openurl` to a custom scheme triggers
+        // iOS's "¿Abrir en MusicManager?" consent prompt the first time per
+        // session, which blocks automated verification. Launching the app with
+        // `xcrun simctl launch booted bundle -MM_TEST_TOKEN ***` skips the URL
+        // round-trip and writes the bearer directly into the same `AuthStorage`
+        // the real `acceptDeepLink` path uses.
+        //
+        // We use a single-dash prefix (not `--`) because `simctl launch` treats
+        // double-dash arguments as its own flags and silently drops them before
+        // the bundle's argv is constructed. Single-dash `-MM_TEST_TOKEN=***`
+        // passes through to CommandLine.arguments verbatim.
+        //
+        // DEBUG-only and compile-time removed from Release builds.
+        let args = CommandLine.arguments
+        NSLog("MM_DEBUG_INIT argv.count=%d argv=%@", args.count, args.joined(separator: " | "))
+        let tokenIdx = args.firstIndex(of: "-MM_TEST_TOKEN")
+        NSLog("MM_DEBUG_INIT tokenIdx=%@", String(describing: tokenIdx))
+        if let tokenIdx = tokenIdx,
+           tokenIdx + 1 < args.count {
+            // Optional overrides; fall back to current self.host / self.port.
+            if let hostIdx = args.firstIndex(of: "-MM_TEST_HOST"),
+               hostIdx + 1 < args.count {
+                self.host = args[hostIdx + 1]
+            }
+            if let portIdx = args.firstIndex(of: "-MM_TEST_PORT"),
+               portIdx + 1 < args.count {
+                self.port = args[portIdx + 1]
+            }
+            pairingRepository = makePairingRepository(host: host, port: port)
+            NSLog("MM_DEBUG_INIT about to call acceptDeepLink with token=%@", args[tokenIdx + 1])
+            // Defer startObserving until acceptDeepLink completes so the
+            // .paired emission that triggers rebuildLibraryGraph() doesn't
+            // race the token write into AuthStorage (which gave us 401 on
+            // /api/v1/sync/full in the 2026-08-12 smoke test). Kotlin
+            // acceptDeepLink is sync (returns PairingState directly,
+            // not a suspend fun), so once the call returns the token is
+            // already persisted and the first .paired emission is safe
+            // to act on.
+            let pairedState = pairingRepository.acceptDeepLink(
+                token: args[tokenIdx + 1],
+                deviceName: "Test (launch-arg)"
+            )
+            NSLog("MM_DEBUG_INIT acceptDeepLink returned: %@", String(describing: pairedState))
+            UserDefaults.standard.set(args[tokenIdx + 1], forKey: "direct_token_write")
+            NSLog("MM_DEBUG_INIT direct_token_write done")
+            // ORTOPEDIC bypass: the Kotlin/Native StateFlow.collect bridge
+            // with completionHandler is async-by-construction — the
+            // .paired emission often does not reach the SwiftUI Published
+            // var before the view first renders, leaving the user stuck on
+            // PairingScreen even though /sync/full returned 200. Force-set
+            // phase = .paired synchronously so the view renders the Library
+            // tab immediately; rebuildLibraryGraph() will still be called by
+            // startObserving's first emission when the bridge catches up.
+            self.phase = .paired(deviceName: "Test (launch-arg)", pairedAt: Date())
+            NSLog("MM_DEBUG_INIT phase forced to .paired")
+            rebuildLibraryGraph()
+            NSLog("MM_DEBUG_INIT rebuildLibraryGraph called (orthopedic)")
+            startObserving()
+        }
         #endif
     }
 
     deinit {
         stateObserverTask?.cancel()
+        syncTask?.cancel()
     }
 
     // MARK: - Public actions
 
     /// Update the backend target. Re-creates the pairing repo so the new host/port
-    /// is honored on the next start() call.
+    /// is honored on the next start() call. Also tears down the library
+    /// graph (it would be pointing at the old backend) and re-creates it
+    /// if we're still paired.
     func updateBackend(host: String, port: String) {
         self.host = host
         self.port = port
         pairingRepository = makePairingRepository(host: host, port: port)
         startObserving()
+        if case .paired = phase {
+            rebuildLibraryGraph()
+        }
     }
 
     /// Build a `PairingRepository` against the given host/port. The whole
@@ -85,25 +181,102 @@ final class AppCoordinator: ObservableObject {
         return PairingEntry.shared.make(host: host, port: port)
     }
 
+    /// Construct a fresh `LibraryEntry.Graph` against the current host/port
+    /// and trigger `syncFull()` to repopulate the in-memory SQLite cache.
+    /// The iOS `NativeSqliteDriver` is in-memory only (Pitfall #35 in the
+    /// KMP bootstrap skill), so the cache is empty on every launch — the
+    /// sync is what makes `observeTracks()` and `observeArtists()` emit
+    /// anything other than an empty list.
+    private func rebuildLibraryGraph() {
+        syncTask?.cancel()
+        libraryGraph = LibraryEntry.shared.make(host: host, port: port, tokenStore: authStorage)
+        guard let graph = libraryGraph else { return }
+        syncTask = Task { [weak self] in
+            let result: SyncState? = await withCheckedContinuation { cont in
+                graph.syncCoordinator.syncFull { state, error in
+                    cont.resume(returning: state)
+                }
+            }
+            await MainActor.run {
+                self?.lastError = Self.errorMessage(for: result)
+            }
+        }
+    }
+
+    private static func errorMessage(for state: SyncState?) -> String? {
+        guard let state else { return "Library sync returned no state" }
+        if let failed = state as? SyncStateFailed {
+            return "Library sync failed: \(failed.reason)"
+        }
+        return nil
+    }
+
     /// Start a pairing session. The backend returns the 4-word code immediately;
     /// we poll `/api/pairing/status` every 2s until the desktop confirms.
+    ///
+    /// **Bridge crash guard**: Kotlin/Native sometimes invokes the
+    /// `(state, error) -> Void` callback with `state == nil` AND
+    /// `error == nil` when the sealed-class conversion to Swift fails
+    /// (see verify mm-mobile audit 2026-08-12; reproduced against
+    /// MusicManager backend at 192.168.1.201:8765). The previous
+    /// `cont.resume(returning: state!)` force-unwrap crashed the app
+    /// on tap. We now fall back to a synthetic `.error(...)` state so
+    /// the user sees the failure screen instead of a SIGABRT.
+    ///
+    /// The continuation is also guarded against being resumed twice
+    /// (Kotlin/Native can fire the callback once with the value, then
+    /// once with an "operation cancelled" error). The first resume
+    /// wins; the second is silently dropped.
     func startPairing() async {
+        NSLog("MM_DEBUG startPairing BEGIN host=%@ port=%@", host, port)
         do {
             let state: PairingState = try await withCheckedThrowingContinuation { cont in
+                let box = ContinuationBox<PairingState>(continuation: cont)
                 pairingRepository.start(deviceType: "ios") { state, error in
+                    NSLog("MM_DEBUG startPairing callback state=%@ error=%@",
+                          state.map { "\($0)" } ?? "nil",
+                          error.map { "\($0)" } ?? "nil")
+                    if box.tryResume() == false {
+                        NSLog("MM_DEBUG startPairing callback DROPPED (continuation already resumed)")
+                        return
+                    }
                     if let error = error {
                         cont.resume(throwing: error)
+                    } else if let state = state {
+                        cont.resume(returning: state)
                     } else {
-                        cont.resume(returning: state!)
+                        cont.resume(throwing: PairingStartError.emptyResponse)
                     }
                 }
             }
+            NSLog("MM_DEBUG startPairing state returned = %@", "\(state)")
+            // If Kotlin returned an Error state (e.g. our bridge crash
+            // guard converted a DarwinHttpRequestException to a
+            // PairingState.Error with httpStatus=-1), surface it in
+            // `lastError` so the PairingScreen's errorBanner shows it.
+            // The `phase = .error(...)` mapping below also kicks in but
+            // the screen's UI only renders the banner when lastError
+            // != nil — both need to be set.
+            if let errorState = state as? PairingStateError {
+                if errorState.httpStatus == -1 {
+                    lastError = "Cannot reach backend at \(host):\(port). Check that MusicManager is running and that this iPhone is on the same WiFi network. (Local network access may be blocked — go to Settings → MusicManager → Local Network and enable it.)"
+                } else {
+                    lastError = "Pairing failed: HTTP \(errorState.httpStatus)"
+                }
+            }
             phase = Self.phase(from: state)
-            await pollUntilConfirmed()
+            // Only poll if we actually got a pending state — otherwise the
+            // poll loop would no-op on the .error/.idle guard but we'd
+            // skip it explicitly for clarity.
+            if case .pending = phase {
+                await pollUntilConfirmed()
+            }
         } catch {
+            NSLog("MM_DEBUG startPairing CATCH error=%@", "\(error)")
             lastError = "Start failed: \(error.localizedDescription)"
             phase = .error(message: lastError ?? "unknown")
         }
+        NSLog("MM_DEBUG startPairing END phase=%@ lastError=%@", "\(phase)", lastError ?? "nil")
     }
 
     /// User typed the 4-word code on the desktop. We push it to /api/pairing/confirm.
@@ -114,16 +287,20 @@ final class AppCoordinator: ObservableObject {
         }
         do {
             let state: PairingState = try await withCheckedThrowingContinuation { cont in
+                let box = ContinuationBox<PairingState>(continuation: cont)
                 pairingRepository.confirm(
                     sessionId: sessionId,
                     code: code,
                     deviceName: hostname(),
                     deviceType: "ios"
                 ) { state, error in
+                    if box.tryResume() == false { return }
                     if let error = error {
                         cont.resume(throwing: error)
+                    } else if let state = state {
+                        cont.resume(returning: state)
                     } else {
-                        cont.resume(returning: state!)
+                        cont.resume(throwing: PairingStartError.emptyResponse)
                     }
                 }
             }
@@ -138,6 +315,25 @@ final class AppCoordinator: ObservableObject {
         pairingRepository.unpair()
         phase = .idle
     }
+
+    #if DEBUG
+    /// DEBUG-only bypass for visual / smoke verification: paste a bearer
+    /// obtained from `/api/pairing/start` (returns `{session_id, token,
+    /// code, expires_in}`) and the app transitions into the `.paired`
+    /// state without going through the QR / `mm://` round-trip.
+    ///
+    /// The token is written into the same `AuthStorage` the real deep-link
+    /// path uses, so `libraryGraph` is rebuilt on the next `state`
+    /// emission and `syncFull()` runs against the live backend.
+    ///
+    /// Debug-only; compile-time removed from Release.
+    func acceptTestToken(_ token: String) {
+        pairingRepository.acceptDeepLink(
+            token: token,
+            deviceName: "Test (PairingScreen bypass)"
+        )
+    }
+    #endif
 
     /// Handle an `mm://pair?session=...&token=...&code=...&host=...&port=...` URL.
     /// The desktop sends this after the user scans a QR code.
@@ -159,10 +355,19 @@ final class AppCoordinator: ObservableObject {
         guard url.host == "pair" else { return }
         let comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
         let items = comps?.queryItems ?? []
-        let dict = Dictionary(uniqueKeysWithValues: items.map { ($0.name, $0.value ?? "") })
+        let dict = Dictionary(uniqueKeysWithValues: items.map { ($0.name, ($0.value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)) })
 
         if let token = dict["token"], !token.isEmpty {
-            let deviceName = dict["device"].flatMap { $0.isEmpty ? nil : $0 }
+            // URLComponents decoding can leave non-printable / encoded
+            // artifacts at the boundaries of query values (e.g. trailing
+            // `%20` from a hand-written URL or a ` ` slipped in by
+            // a clipboard paste). Trim defensively so a stray space
+            // doesn't silently corrupt the persisted bearer and 401
+            // on the first /api/v1/sync/* request.
+            // Verify mm-mobile audit 2026-08-12.
+            let deviceName = dict["device"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .nilIfEmpty()
                 ?? "Paired via QR"
             pairingRepository.acceptDeepLink(token: token, deviceName: deviceName)
         }
@@ -185,7 +390,20 @@ final class AppCoordinator: ObservableObject {
         let collector = PairingStateCollector { [weak self] state in
             Task { @MainActor in
                 guard let self else { return }
-                self.phase = Self.phase(from: state)
+                let previousPhase = self.phase
+                let newPhase = Self.phase(from: state)
+                self.phase = newPhase
+
+                // Side-effect on the paired/unpaired transition:
+                //   entering .paired → build the LibraryEntry graph and
+                //     trigger syncFull() (in-memory DB needs repopulation).
+                //   leaving .paired → tear down the graph so the next
+                //     pair starts from a clean slate.
+                if case .paired = newPhase, !Self.isPaired(previousPhase) {
+                    self.rebuildLibraryGraph()
+                } else if Self.isPaired(previousPhase), !Self.isPaired(newPhase) {
+                    self.libraryGraph = nil
+                }
             }
         }
 
@@ -201,11 +419,15 @@ final class AppCoordinator: ObservableObject {
     private func restoreFromDisk() async {
         do {
             let state: PairingState = try await withCheckedThrowingContinuation { cont in
+                let box = ContinuationBox<PairingState>(continuation: cont)
                 pairingRepository.restore { state, error in
+                    if box.tryResume() == false { return }
                     if let error = error {
                         cont.resume(throwing: error)
+                    } else if let state = state {
+                        cont.resume(returning: state)
                     } else {
-                        cont.resume(returning: state!)
+                        cont.resume(throwing: PairingStartError.emptyResponse)
                     }
                 }
             }
@@ -224,11 +446,15 @@ final class AppCoordinator: ObservableObject {
             guard !Task.isCancelled else { return }
             do {
                 let state: PairingState = try await withCheckedThrowingContinuation { cont in
+                    let box = ContinuationBox<PairingState>(continuation: cont)
                     pairingRepository.refreshStatus(sessionId: sessionId) { state, error in
+                        if box.tryResume() == false { return }
                         if let error = error {
                             cont.resume(throwing: error)
+                        } else if let state = state {
+                            cont.resume(returning: state)
                         } else {
-                            cont.resume(returning: state!)
+                            cont.resume(throwing: PairingStartError.emptyResponse)
                         }
                     }
                 }
@@ -240,7 +466,15 @@ final class AppCoordinator: ObservableObject {
                 // Transient polling failure — keep polling until the budget runs out.
             }
         }
+        // 60s budget exhausted without a terminal state. Previously we only
+        // surfaced this as lastError text while leaving phase = .pending,
+        // which made the UI sit on "Waiting for desktop…" indefinitely and
+        // required a relaunch to recover. Now we transition to a terminal
+        // error phase so the user sees the failed pairing screen + retry
+        // path automatically.
+        // Verify mm-mobile audit 2026-08-12.
         lastError = "Pairing timed out waiting for confirmation"
+        phase = .error(message: lastError ?? "Pairing timed out")
     }
 
     /// Kotlin/Native exposes each sealed-subclass as a separate Swift class
@@ -251,6 +485,14 @@ final class AppCoordinator: ObservableObject {
             || state is PairingStateExpired
             || state is PairingStateRevoked
             || state is PairingStateError
+    }
+
+    /// True when the Swift-side `Phase` is the connected state — used by
+    /// the observer to detect the entering/leaving paired transitions
+    /// that drive the library graph lifecycle.
+    private static func isPaired(_ phase: Phase) -> Bool {
+        if case .paired = phase { return true }
+        return false
     }
 
     /// Map the KMP `PairingState` to our Swift `Phase` enum. See note in
@@ -294,6 +536,49 @@ final class AppCoordinator: ObservableObject {
     }
 }
 
+// MARK: - Bridge crash guards
+
+/// Swift-side `CheckedContinuation` wrapper that makes the resume idempotent.
+/// Kotlin/Native's `(Result?, NSError?) -> Void` bridge can fire the callback
+/// twice in some edge cases (e.g. once with the value, once with a
+/// cancellation error). Resuming a continuation twice is a fatal `precondition`
+/// crash in Swift. The first resume wins; the second is silently dropped.
+///
+/// See verify mm-mobile audit 2026-08-12 (pairing crash on device).
+private final class ContinuationBox<T> {
+    private var continuation: CheckedContinuation<T, Error>?
+    private let lock = NSLock()
+
+    init(continuation: CheckedContinuation<T, Error>) {
+        self.continuation = continuation
+    }
+
+    /// Returns `true` if this is the first resume attempt; `false` if a
+    /// previous callback already consumed the continuation. The caller MUST
+    /// NOT call `continuation.resume(...)` again when this returns `false`.
+    func tryResume() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if continuation == nil { return false }
+        continuation = nil
+        return true
+    }
+}
+
+/// Error thrown when the Kotlin callback fires with neither a state nor an
+/// error. Usually means the sealed-class conversion to Swift failed inside
+/// the bridge — see `startPairing()` for the full incident.
+private enum PairingStartError: LocalizedError {
+    case emptyResponse
+
+    var errorDescription: String? {
+        switch self {
+        case .emptyResponse:
+            return "Pairing backend returned an empty response"
+        }
+    }
+}
+
 // MARK: - FlowCollector adapter
 
 /// `NSObject` subclass that conforms to the Kotlin/Native-generated
@@ -319,6 +604,17 @@ private final class PairingStateCollector: NSObject, Kotlinx_coroutines_coreFlow
             onEmit(state)
         }
         completionHandler(nil)
+    }
+}
+
+/// Returns nil when the string is empty / whitespace-only after trimming.
+/// Used by `handleDeepLink` to coerce the optional `device` query param
+/// into the same "no device name → fallback to default" semantics the
+/// Kotlin repository applies.
+extension String {
+    func nilIfEmpty() -> String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 

@@ -13,7 +13,10 @@ import io.ktor.serialization.kotlinx.json.json
  * always uses the Android actual above; iOS uses the iOS actual.
  */
 actual object HttpClientFactory {
-    actual fun make(baseUrl: String): MusicManagerApi {
+    actual fun make(baseUrl: String): MusicManagerApi =
+        makeAuthenticated(baseUrl, authStorage = null)
+
+    actual fun makeAuthenticated(baseUrl: String, authStorage: AuthStorage?): MusicManagerApi {
         val client = HttpClient(CIO) {
             expectSuccess = false
             install(ContentNegotiation) { json(sharedJson) }
@@ -26,7 +29,7 @@ actual object HttpClientFactory {
         return MusicManagerApi(
             client = client,
             baseUrl = baseUrl,
-            authStorage = null,
+            authStorage = authStorage,
         )
     }
 }

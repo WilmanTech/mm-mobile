@@ -134,6 +134,11 @@ kotlin {
             // JVM target is test-only; use CIO engine (pure-Kotlin) so
             // :shared:jvmTest doesn't pull in OkHttp's android.test artifacts.
             implementation(libs.ktor.client.cio)
+
+            // Phase 4.A.4: jvmTest creates its own JdbcSqliteDriver for
+            // SyncCoordinatorTest. The shared DatabaseFactory.jvm actual
+            // also opens one (in-memory) when called.
+            implementation(libs.sqldelight.jdbc.driver)
         }
     }
 }
