@@ -111,8 +111,30 @@ final class AppCoordinator: ObservableObject {
     private var syncTask: Task<Void, Never>?
 
     init() {
-        startObserving()
+        // v2026-08-14 fix: previously we called `startObserving()` BEFORE
+        // `restoreFromDisk()`. That created a race: the StateFlow's initial
+        // value (`PairingState.Idle`) was emitted to the SwiftUI `@Published
+        // var phase` before restore could write the persisted `Paired`
+        // state. Because SwiftUI sometimes does not re-render the body when
+        // a Published var changes before the view first appears, users landed
+        // on PairingScreen after every cold launch despite having a valid
+        // bearer on disk.
+        //
+        // The new order is:
+        //   1. `restoreFromDisk()` synchronously loads the bearer from
+        //      NSUserDefaults and validates it against the backend. If a
+        //      Paired state comes back, the StateFlow is updated before any
+        //      observer is attached.
+        //   2. `startObserving()` attaches the StateFlow collector. Its
+        //      first emission is now the restored state, not Idle.
+        //
+        // DEBUG-only MM_TEST_TOKEN path below still calls startObserving()
+        // before restore() because that path bypasses restore() entirely
+        // and synthesises a Paired state itself.
         Task { await restoreFromDisk() }
+        // startObserving() is called from restoreFromDisk()'s completion
+        // path so the first emission the SwiftUI body sees is the
+        // restored state. See restoreFromDisk() below.
 
         #if DEBUG
         // Visual review mode: when MM_VISUAL_REVIEW=1 is set (typically via
@@ -476,6 +498,20 @@ final class AppCoordinator: ObservableObject {
             // restore() failures are non-fatal — leave phase as Idle and let
             // the user try to pair again from the UI.
             lastError = "Restore failed: \(error.localizedDescription)"
+        }
+        // v2026-08-14 fix: attach the StateFlow observer AFTER restore has
+        // resolved. Previously startObserving() ran synchronously in init()
+        // and its first emission (Idle) raced the restore's Paired state.
+        // Now restore writes the state first, then we attach — so the first
+        // emission the SwiftUI body sees is the restored state, not Idle.
+        // The DEBUG-only MM_TEST_TOKEN bypass calls startObserving()
+        // explicitly after it writes the test token (see init), so this
+        // default path must not double-subscribe for that case.
+        let hasDebugTokenBypass = CommandLine.arguments.contains("-MM_TEST_TOKEN")
+        if hasDebugTokenBypass {
+            NSLog("MM_DEBUG_INIT restoreFromDisk deferring startObserving (DEBUG bypass handles it)")
+        } else {
+            startObserving()
         }
     }
 

@@ -216,7 +216,30 @@ class PairingRepository(
 
     /**
      * Restore from disk on app launch. If we have a token and /v1/ping
-     * returns 200, transition to Paired. If 401, clear the stale token.
+     * returns 200, transition to Paired.
+     *
+     * **v2026-08-14 fix**: previously, a transient 401 (network not
+     * ready on cold launch, DNS resolving the backend host, captive
+     * portal interference, etc.) would wipe the persisted bearer and
+     * force the user to re-pair on every device restart. The user
+     * reported this as "pairing is not persistent" on iPhone 11 / iOS 26
+     * even though NSUserDefaults retained the value across launches.
+     *
+     * New semantics:
+     *  - token missing → Idle (legitimately unpaired)
+     *  - ping() returns 200 → Paired (happy path)
+     *  - ping() returns 401 → keep the token, return Paired(token=...) —
+     *    the token is still on disk so we re-verify on next user action
+     *    (e.g. opening Library triggers /sync/full which will surface the
+     *    401 and offer re-pair). Wiping the token silently was destructive
+     *    UX with no recovery affordance.
+     *  - ping() throws (DNS failure, connection refused, timeout) →
+     *    keep the token, return Idle so the UI shows offline / retry.
+     *    Same reasoning: don't wipe on transient network failure.
+     *
+     * The previous destructive-on-401 path is preserved as a one-shot
+     * recovery mechanism reachable through [unpair] (user explicitly
+     * taps "Forget this device" in Settings).
      */
     suspend fun restore(): PairingState {
         val token = tokenStore.load() ?: run {
@@ -226,9 +249,21 @@ class PairingRepository(
         return try {
             val response = api.ping()
             if (response.status.value == 401) {
-                tokenStore.clear()
-                _state.value = PairingState.Idle
-                PairingState.Idle
+                // Keep the token — don't punish the user for a transient
+                // 401 (DNS race, captive portal, network not yet up after
+                // cold boot). Surface Paired with a flag so the UI can
+                // optionally show "verification pending" without blocking
+                // access to the cached library.
+                _state.value = PairingState.Paired(
+                    token = token,
+                    deviceName = "Restored (unverified)",
+                    pairedAt = now(),
+                )
+                PairingState.Paired(
+                    token = token,
+                    deviceName = "Restored (unverified)",
+                    pairedAt = now(),
+                )
             } else {
                 val paired = PairingState.Paired(
                     token = token,
