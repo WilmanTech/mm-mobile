@@ -242,6 +242,7 @@ struct LibraryScreen: View {
                                 title: track.title,
                                 artistName: track.artistName,
                                 albumTitle: track.albumTitle,
+                                albumId: String(track.albumId),
                             ))
                         }
                         if idx < filteredTracks.count - 1 {

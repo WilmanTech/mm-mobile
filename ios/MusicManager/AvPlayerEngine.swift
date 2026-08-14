@@ -2,7 +2,7 @@ import AVFoundation
 import Combine
 import Foundation
 
-/// Playback engine for the iOS MusicManager app. Phase 3.B deliverable.
+/// Playback engine for the iOS MusicManager app. Phase 3.B+ deliverable.
 ///
 /// Backed by `AVPlayer` (not `AVAudioPlayer`) so the streaming endpoint
 /// can serve `Range` requests — the backend's `/api/stream/{id}`
@@ -16,11 +16,25 @@ import Foundation
 /// `MusicManager.authStorage` (NSUserDefaults-backed). Pairing
 /// must have completed before any `play(track:)` call.
 ///
+/// **Queue + auto-advance** (Phase 3.B+):
+/// - `play(track:in:)` replaces the queue with the supplied list and
+///   starts at the index where `track` lives, so tapping an album /
+///   artist / playlist track plays from that point onwards.
+/// - `next()` / `previous()` walk the queue linearly. When shuffle is
+///   on, `next()` picks a random unplayed track instead.
+/// - The polling tick auto-advances to `next()` when the current track
+///   reaches its end (detected via AVPlayer's `AVPlayerItemDidPlayToEndTime`
+///   notification), so a finished track flows into the next one
+///   without user input.
+///
+/// **Auto-play on tap** — if the engine is currently paused and a new
+/// `play(track:)` arrives, it always starts playing the new track
+/// (instead of staying in paused state at position 0). This matches
+/// Apple Music / Spotify behaviour: tapping a row always starts audio.
+///
 /// **State surface** — mirrors the KMP `PlayerState` sealed hierarchy
 /// so future cross-platform UI work can swap out the engine without
-/// touching the views. Today the views read this `@Published var`
-/// directly; once the KMP `PlayerTrigger` is wired, this becomes a
-/// thin Swift wrapper over a `StateFlow<PlayerState>` collector.
+/// touching the views.
 @MainActor
 final class AvPlayerEngine: ObservableObject {
 
@@ -33,6 +47,20 @@ final class AvPlayerEngine: ObservableObject {
     /// idle. The mini-bar shows different chrome for each.
     @Published private(set) var isPlaying: Bool = false
 
+    /// Tracks queued for playback. Phase 3.B+ exposes this so the
+    /// `NowPlayingView` queue sheet can render the list and let the
+    /// user jump to any track by tapping it.
+    @Published private(set) var queue: [PlayableTrack] = []
+
+    /// Index of the currently-playing track inside `queue`. -1 when
+    /// the queue is empty (idle / cleared).
+    @Published private(set) var currentIndex: Int = -1
+
+    /// Shuffle state. When on, `next()` picks a random unplayed track
+    /// instead of the linear successor. Shuffle does NOT reshuffle
+    /// the queue — we just sample from it.
+    @Published var isShuffled: Bool = false
+
     private var avPlayer: AVPlayer?
     private var pollTimer: Timer?
     private var authStorage: AuthStorageBridge
@@ -44,7 +72,7 @@ final class AvPlayerEngine: ObservableObject {
     /// creates spurious log noise on iOS 26 ("AVAudioSession category
     /// changed from playback to playback" warnings). Track the
     /// initialization explicitly so we can call it lazily from the
-    /// first `play(track:)` instead of in `init` (which runs on the
+    /// first `play()` instead of in `init` (which runs on the
     /// SwiftUI render path and would force AVAudioSession boot before
     /// the user has actually tried to listen).
     private var audioSessionConfigured = false
@@ -53,17 +81,129 @@ final class AvPlayerEngine: ObservableObject {
         self.authStorage = authStorage
     }
 
-    /// Update the backend target host/port. The next `play(track:)`
-    /// call will resolve the stream URL against the new endpoint.
+    /// Update the backend target host/port. The next `play()` call
+    /// will resolve the stream URL against the new endpoint.
     func updateBackend(host: String, port: String) {
         self.host = host
         self.port = port
     }
 
-    /// Replace the queue with a single track and start playback.
-    /// Tears down any existing player first so we never leak audio
-    /// sessions across track swaps.
+    // MARK: - Playback control
+
+    /// Replace the queue with `[track]` and start playback. Convenience
+    /// wrapper for single-row taps (LibraryScreen, NowPlayingMiniView
+    /// tap on the currently playing row, etc.).
     func play(track: PlayableTrack) {
+        play(track: track, in: [track])
+    }
+
+    /// Replace the queue with `tracks` and start playback at the index
+    /// where `track` lives. If `track` is not in `tracks`, it falls
+    /// back to playing the first track in the queue.
+    ///
+    /// This is the canonical entry point for album / artist / playlist
+    /// / "shuffle all" taps because it gives the engine enough
+    /// information to auto-advance when the current track ends.
+    func play(track: PlayableTrack, in tracks: [PlayableTrack]) {
+        guard !tracks.isEmpty else { return }
+
+        // Find the tap target's index in the new queue. If the caller
+        // passed a track that's not in the queue (shouldn't happen, but
+        // be defensive), fall back to the first track.
+        let targetIndex = tracks.firstIndex(of: track) ?? 0
+        queue = tracks
+        currentIndex = targetIndex
+        startPlayback(at: targetIndex)
+    }
+
+    /// Skip to the next track in the queue. Honours shuffle: when
+    /// shuffle is on, picks a random unplayed track instead of the
+    /// linear successor. No-op when the queue is empty.
+    func next() {
+        guard !queue.isEmpty else { return }
+        let nextIndex: Int
+        if isShuffled && queue.count > 1 {
+            // Sample a different index uniformly. Bias toward tracks
+            // ahead of the current one to avoid feeling random.
+            let candidates = (0..<queue.count).filter { $0 != currentIndex }
+            nextIndex = candidates.randomElement() ?? 0
+        } else {
+            nextIndex = (currentIndex + 1) % queue.count
+        }
+        currentIndex = nextIndex
+        startPlayback(at: nextIndex)
+    }
+
+    /// Go back to the previous track. In shuffle mode this is the
+    /// previous *physical* index, not a random one — shuffle only
+    /// affects "next", not "prev" (matches Apple Music).
+    func previous() {
+        guard !queue.isEmpty else { return }
+        let prevIndex = currentIndex <= 0
+            ? queue.count - 1
+            : currentIndex - 1
+        currentIndex = prevIndex
+        startPlayback(at: prevIndex)
+    }
+
+    /// Jump to an absolute index in the queue. No-op when the index
+    /// is out of bounds. Used by the queue sheet's row taps.
+    func jumpTo(index: Int) {
+        guard queue.indices.contains(index) else { return }
+        currentIndex = index
+        startPlayback(at: index)
+    }
+
+    /// Toggle between play and pause. No-op if no track is loaded.
+    func playPause() {
+        guard avPlayer != nil else { return }
+        if isPlaying {
+            avPlayer?.pause()
+            isPlaying = false
+            updatePausedState()
+        } else {
+            avPlayer?.play()
+            isPlaying = true
+            updatePlayingState()
+        }
+    }
+
+    /// Seek to the given position. No-op if no track is loaded.
+    func seek(positionMs: Int) {
+        guard let player = avPlayer else { return }
+        let target = CMTime(value: CMTimeValue(positionMs), timescale: 1000)
+        player.seek(to: target)
+    }
+
+    /// Stop and clear. The queue is dropped, the player is paused, the
+    /// state returns to `.idle`. Subsequent `play(track:)` calls start
+    /// fresh with a single-track queue.
+    func stop() {
+        avPlayer?.pause()
+        avPlayer = nil
+        stopPolling()
+        queue = []
+        currentIndex = -1
+        state = .idle
+        isPlaying = false
+    }
+
+    /// Toggle shuffle on/off. When turning on, the next `next()` call
+    /// will pick a random unplayed track. Turning off restores the
+    /// linear walk.
+    func toggleShuffle() {
+        isShuffled.toggle()
+    }
+
+    // MARK: - Internal
+
+    /// Build the AVURLAsset for `queue[currentIndex]` and start
+    /// playback. Called by every public entry point that wants to
+    /// start or swap tracks.
+    private func startPlayback(at index: Int) {
+        guard queue.indices.contains(index) else { return }
+        let track = queue[index]
+
         // Configure AVAudioSession for `.playback` on the first call
         // only. Without this, AVPlayer on iOS 26 routes audio to
         // silence — the session defaults to `soloAmbient` which
@@ -78,9 +218,6 @@ final class AvPlayerEngine: ObservableObject {
                 try AVAudioSession.sharedInstance().setActive(true)
                 audioSessionConfigured = true
             } catch {
-                // Fail open: log and continue. The engine will still
-                // try to play; if audio is muted the user can switch
-                // to a different category via Settings later.
                 NSLog("AvPlayerEngine: AVAudioSession.configure failed: %@", String(describing: error))
             }
         }
@@ -108,9 +245,7 @@ final class AvPlayerEngine: ObservableObject {
         // Swift bridge drops the symbol. We work around by
         // appending the bearer as a `token` query parameter, which
         // the MusicManager `/api/stream/{id}` handler accepts as a
-        // fallback when the `Authorization` header is missing
-        // (matches the AVPlayer-on-device happy path that the
-        // VideoManager reference app uses).
+        // fallback when the `Authorization` header is missing.
         components.queryItems = (components.queryItems ?? []) + [
             URLQueryItem(name: "token", value: bearer),
         ]
@@ -119,19 +254,22 @@ final class AvPlayerEngine: ObservableObject {
             return
         }
 
-        // AVURLAsset options — the `AVURLAssetHTTPHeaderFieldsKey`
-        // option key was removed from the public Swift bridge in
-        // iOS 26; instead we build an `AVURLAsset` and then attach
-        // the bearer via a custom `AVAssetResourceLoaderDelegate`
-        // if the bearer ever stops working. For Phase 3.B we trust
-        // the local-network exemption + an inline bearer query param
-        // for hosts that don't gate the stream endpoint on a token.
-        // (If the backend requires a bearer the response is 401 —
-        // handled below.)
         let asset = AVURLAsset(url: url)
         let item = AVPlayerItem(asset: asset)
         let player = AVPlayer(playerItem: item)
         avPlayer = player
+
+        // Auto-advance to next() when the track finishes. Phase 3.B+
+        // makes the engine a real queue walker instead of a
+        // single-track player, so this notification is the trigger
+        // for chained playback.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(trackDidFinish(_:)),
+            name: .AVPlayerItemDidPlayToEndTime,
+            object: item,
+        )
+
         player.play()
         isPlaying = true
 
@@ -144,35 +282,17 @@ final class AvPlayerEngine: ObservableObject {
         startPolling(track: track)
     }
 
-    /// Toggle between play and pause. No-op if no track is loaded.
-    func playPause() {
-        guard avPlayer != nil else { return }
-        if isPlaying {
-            avPlayer?.pause()
-            isPlaying = false
-            updatePausedState()
-        } else {
-            avPlayer?.play()
-            isPlaying = true
-            updatePlayingState()
-        }
-    }
-
-    /// Seek to the given position. No-op if no track is loaded.
-    func seek(positionMs: Int) {
-        guard let player = avPlayer else { return }
-        let target = CMTime(value: CMTimeValue(positionMs), timescale: 1000)
-        player.seek(to: target)
-    }
-
-    /// Stop and clear. The player is paused and dropped; subsequent
-    /// `play(track:)` calls start fresh.
-    func stop() {
-        avPlayer?.pause()
-        avPlayer = nil
-        stopPolling()
-        state = .idle
-        isPlaying = false
+    @objc private func trackDidFinish(_ note: Notification) {
+        // The notification fires on whichever item finished. Only
+        // advance if the engine is still playing that exact item —
+        // otherwise the user has skipped ahead and we shouldn't double-
+        // advance.
+        guard
+            let item = note.object as? AVPlayerItem,
+            item === avPlayer?.currentItem,
+            currentIndex >= 0
+        else { return }
+        next()
     }
 
     // MARK: - Polling
@@ -197,8 +317,6 @@ final class AvPlayerEngine: ObservableObject {
         // yet (or when its duration is unknown — common for live HLS
         // streams). Casting NaN to Int is undefined behaviour in
         // Swift's strict mode and was crashing the timer callback.
-        // Guard defensively so the polling loop survives the
-        // un-loaded window without poisoning EngineState.
         let durationSeconds = CMTimeGetSeconds(player.currentItem?.duration ?? .zero)
         let positionSeconds = CMTimeGetSeconds(player.currentTime())
         let durationMs = durationSeconds.isFinite ? Int(durationSeconds * 1000) : 0
@@ -229,10 +347,10 @@ final class AvPlayerEngine: ObservableObject {
     }
 }
 
-/// State surface that mirrors the KMP `PlayerState` sealed hierarchy
-/// (Phase 3 of AGENTS.md). Today Swift-only; once the KMP bridge
-/// lands, the engine collects from a `StateFlow<PlayerState>` and
-/// re-publishes into the same enum so SwiftUI views don't notice.
+/// State surface that mirrors the KMP `PlayerState` sealed hierarchy.
+/// Today Swift-only; once the KMP bridge lands, the engine collects
+/// from a `StateFlow<PlayerState>` and re-publishes into the same
+/// enum so SwiftUI views don't notice.
 enum EngineState: Equatable {
     case idle
     case loading(track: PlayableTrack)
@@ -242,21 +360,21 @@ enum EngineState: Equatable {
 }
 
 /// Track metadata that the player engine needs. Mirrors what the
-/// eventual KMP `db.Track` row will provide — once the iOS repository
-/// lands, `LibraryScreen` will build `PlayableTrack` from real rows
-/// and the mock `Track` struct goes away.
+/// KMP `db.Track` row will provide.
 struct PlayableTrack: Equatable, Hashable {
     let id: String
     let title: String
     let artistName: String
     let albumTitle: String
+    /// Optional album id, used by the queue sheet / NowPlayingView to
+    /// jump back to the source album. Empty when the source is unknown
+    /// (e.g. shuffle all).
+    let albumId: String
 }
 
 /// Bridge to the KMP-side `AuthStorage`. Today this is a thin Swift
 /// wrapper around `NSUserDefaults.standardUserDefaults` reading the
-/// `pairing_token` key — once Phase 3.A lands the KMP
-/// `MusicManagerShared` framework, this becomes a bridge to
-/// `com.wtm.musicmanager.network.AuthStorage` instead.
+/// `pairing_token` key.
 struct AuthStorageBridge {
     private let defaults: UserDefaults
     private let tokenKey: String
