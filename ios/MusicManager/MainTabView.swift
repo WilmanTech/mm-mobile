@@ -58,7 +58,7 @@ struct MainTabView: View {
                     }
                     .tag(Tab.search)
 
-                LibraryScreen(graph: graph)
+                LibraryScreen(graph: graph, player: player)
                     .tabItem {
                         Label("Biblioteca", systemImage: "music.note.list")
                     }

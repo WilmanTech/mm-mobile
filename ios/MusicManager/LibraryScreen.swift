@@ -24,6 +24,7 @@ import MusicManagerShared
 struct LibraryScreen: View {
 
     let graph: LibraryEntry.Graph
+    @ObservedObject var player: AvPlayerEngine
 
     @State private var artists: [SwiftArtist] = []
     @State private var tracks: [SwiftTrack] = []
@@ -230,7 +231,19 @@ struct LibraryScreen: View {
             } else {
                 VStack(spacing: 0) {
                     ForEach(Array(filteredTracks.enumerated()), id: \.element.id) { idx, track in
-                        TrackRow(track: track)
+                        // Phase 3.B tap-to-play: tapping a row starts
+                        // playback of that track. The SwiftTrack.id is
+                        // Int64 (SQLDelight row id) but PlayableTrack.id
+                        // is String (because the player URL embeds it as
+                        // /api/stream/{id}). Convert at the wire boundary.
+                        TrackRow(track: track) {
+                            player.play(track: PlayableTrack(
+                                id: String(track.id),
+                                title: track.title,
+                                artistName: track.artistName,
+                                albumTitle: track.albumTitle,
+                            ))
+                        }
                         if idx < filteredTracks.count - 1 {
                             Divider()
                                 .background(Color.mmTextDisabled.opacity(0.2))
@@ -352,6 +365,7 @@ extension SwiftArtist {
 
 private struct TrackRow: View {
     let track: SwiftTrack
+    var onTap: () -> Void = {}
 
     var body: some View {
         HStack(spacing: 12) {
@@ -376,6 +390,13 @@ private struct TrackRow: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+        // Phase 3.B tap-to-play: a single tap on the row fires the
+        // parent-supplied onTap closure which starts playback via
+        // AvPlayerEngine. We keep the default value `{}` so existing
+        // call sites that just want to render the row (e.g. embedded
+        // previews) don't have to wire it.
+        .contentShape(Rectangle())
+        .onTapGesture { onTap() }
     }
 
     private var trackArtwork: some View {

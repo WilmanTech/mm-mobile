@@ -51,7 +51,7 @@ struct RootView: View {
                         MainTabView(graph: graph, player: player)
                             .environmentObject(coordinator)
                     } else {
-                        PairedScreen()
+                        PairedScreen(player: player)
                     }
                 }
             }
