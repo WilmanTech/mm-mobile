@@ -32,10 +32,47 @@ final class AppCoordinator: ObservableObject {
     }
 
     @Published var phase: Phase = .idle
-    @Published var host: String = "127.0.0.1"
-    @Published var port: String = "8765"
+    @Published var host: String = AppCoordinator.persistedHost()
+    @Published var port: String = AppCoordinator.persistedPort()
     @Published var lastError: String?
     @Published var showPreview: Bool = false
+
+    // MARK: - Host/Port persistence
+
+    /// UserDefaults keys for the last-used backend host/port. We persist
+    /// these so the PairingScreen doesn't snap back to 127.0.0.1 on
+    /// every cold launch — without this, users had to edit the host
+    /// field after every reinstall because the default
+    /// `127.0.0.1` points at the device's own loopback, not the Mac
+    /// running the MusicManager backend.
+    private static let kHostKey = "mm_backend_host"
+    private static let kPortKey = "mm_backend_port"
+
+    /// Default host is the device's loopback. PersistedHost overrides
+    /// it with whatever the user typed last.
+    private static func persistedHost() -> String {
+        if let saved = UserDefaults.standard.string(forKey: kHostKey),
+           !saved.isEmpty {
+            return saved
+        }
+        return "127.0.0.1"
+    }
+
+    private static func persistedPort() -> String {
+        if let saved = UserDefaults.standard.string(forKey: kPortKey),
+           !saved.isEmpty {
+            return saved
+        }
+        return "8765"
+    }
+
+    /// Write the current host/port to UserDefaults so the next cold
+    /// launch picks them up. Called from `updateBackend(...)` so we
+    /// also persist any in-session edits the user made via the form.
+    private func persistBackend() {
+        UserDefaults.standard.set(host, forKey: Self.kHostKey)
+        UserDefaults.standard.set(port, forKey: Self.kPortKey)
+    }
 
     /// Library graph wired by Phase 4.A.4 — populated the moment the app
     /// transitions into `.paired` and reset on `unpair()`. Swift views
@@ -167,6 +204,9 @@ final class AppCoordinator: ObservableObject {
     func updateBackend(host: String, port: String) {
         self.host = host
         self.port = port
+        // Persist so the next cold launch / reinstall doesn't snap
+        // back to the 127.0.0.1 default.
+        persistBackend()
         pairingRepository = makePairingRepository(host: host, port: port)
         startObserving()
         if case .paired = phase {
