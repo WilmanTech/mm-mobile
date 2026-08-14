@@ -17,6 +17,7 @@ import SwiftUI
 struct PairedScreen: View {
 
     @EnvironmentObject private var coordinator: AppCoordinator
+    @ObservedObject var player: AvPlayerEngine
 
     var body: some View {
         NavigationStack {
@@ -25,7 +26,7 @@ struct PairedScreen: View {
                     .ignoresSafeArea()
 
                 if let graph = coordinator.libraryGraph {
-                    LibraryScreen(graph: graph)
+                    LibraryScreen(graph: graph, player: player)
                         .toolbar {
                             ToolbarItem(placement: .topBarTrailing) {
                                 unpairButton
@@ -131,6 +132,6 @@ struct PairedScreen: View {
 }
 
 #Preview {
-    PairedScreen()
+    PairedScreen(player: AvPlayerEngine(authStorage: AuthStorageBridge()))
         .environmentObject(AppCoordinator())
 }
