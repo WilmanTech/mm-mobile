@@ -1,5 +1,6 @@
 package com.wtm.musicmanager.data
 
+import com.wtm.musicmanager.download.DownloadStateRepository
 import com.wtm.musicmanager.network.AuthStorage
 import com.wtm.musicmanager.network.HttpClientFactory
 import com.wtm.musicmanager.network.MusicManagerApi
@@ -52,6 +53,13 @@ object LibraryEntry {
         val syncTrigger: SyncTrigger,
         val baseHost: String,
         val basePort: String,
+        // Phase 3.D: per-track download state read+write. iOS
+        // `SettingsView`'s "Descargas" section subscribes to
+        // `observeStates()` and calls `markDownloaded` /
+        // `markNotDownloaded` from a debug toggle. The future
+        // production download worker (Phase 5 / BGTaskScheduler)
+        // will be the real caller of those mutators.
+        val downloadStateRepository: DownloadStateRepository,
     )
 
     fun make(host: String, port: String, tokenStore: AuthStorage): Graph {
@@ -66,6 +74,7 @@ object LibraryEntry {
             syncTrigger = syncCoordinator,
             baseHost = host,
             basePort = port,
+            downloadStateRepository = databaseGraph.downloadStateRepository,
         )
     }
 }

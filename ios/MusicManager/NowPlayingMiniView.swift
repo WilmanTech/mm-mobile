@@ -47,23 +47,171 @@ struct NowPlayingMiniView: View {
 
     var body: some View {
         Group {
-            switch engine.state {
-            case .idle, .error:
+            // Phase 3.C: previously the mini only appeared when the
+            // engine had an active `state` (loading/playing/paused).
+            // After a cold launch with a restored queue, the engine
+            // is `.idle` until the user opts in (see `init` for the
+            // rationale), which meant the restored queue was
+            // invisible. We add a dedicated "restored queue" arm
+            // that shows a "Resume queue" chrome with the same
+            // tap-to-open-full-player behaviour so the user has a
+            // way back into the previously-playing context.
+            if engine.queue.isEmpty {
                 EmptyView()
-            case .loading(let track),
-                 .playing(let track, _, _),
-                 .paused(let track, _, _):
-                rowContainer(track: track)
+            } else if Self.isInactive(engine.state) {
+                restoredQueueRow
+            } else {
+                activeRow
             }
         }
         .onAppear { syncVisibility() }
         .onChange(of: engine.state) { _ in syncVisibility() }
+        .onChange(of: engine.queue) { _ in syncVisibility() }
         // The full-screen player renders on top of everything,
         // including the TabView. We attach it here so the cover
         // can be triggered from the chrome tap closure below.
         .fullScreenCover(isPresented: $showFullPlayer) {
-            NowPlayingView(engine: engine, graph: graph)
+            // Phase 3.C: `NowPlayingView.init` expects
+            // `Binding<Bool?>?` (the Optional lets the view
+            // distinguish between "I was presented via
+            // NavigationLink" and "I was presented via
+            // fullScreenCover"). The cover's binding is
+            // `Binding<Bool>`, so we bridge by mapping to/from
+            // `Bool?` and writing back to `$showFullPlayer` on
+            // dismiss. This is what makes the chevron-down /
+            // drag-down gestures work — the parent cover
+            // observes the binding flip and tears itself down.
+            NowPlayingView(
+                engine: engine,
+                graph: graph,
+                isPresented: Binding<Bool?>(
+                    get: { self.showFullPlayer ? true : nil },
+                    set: { newValue in
+                        if newValue != true { self.showFullPlayer = false }
+                    }
+                )
+            )
         }
+    }
+
+    /// True when the engine has no track actively loaded — i.e. either
+    /// `.idle` (fresh launch or after `stop()`) or `.error`. Phase
+    /// 3.C treats both as "queue restored from disk, waiting for the
+    /// user to opt in".
+    private static func isInactive(_ state: EngineState) -> Bool {
+        switch state {
+        case .idle, .error: return true
+        case .loading, .playing, .paused: return false
+        }
+    }
+
+    /// The active-state chrome (loading / playing / paused). The
+    /// current track comes from `engine.state` directly, which
+    /// carries the polling-tick position.
+    @ViewBuilder
+    private var activeRow: some View {
+        switch engine.state {
+        case .idle, .error:
+            // Unreachable: caller already gated on
+            // `!isInactive(state)`.
+            EmptyView()
+        case .loading(let track),
+             .playing(let track, _, _),
+             .paused(let track, _, _):
+            rowContainer(track: track)
+        }
+    }
+
+    /// Restored-queue chrome shown after a cold launch when
+    /// `engine.queue` has items but the engine is still `.idle` (or
+    /// `.error`). Tapping the row opens the full player where the
+    /// user can resume from `currentIndex` via the play button.
+    @ViewBuilder
+    private var restoredQueueRow: some View {
+        let track: PlayableTrack = {
+            // Prefer the track at `currentIndex`; fall back to the
+            // first track in the queue when `currentIndex` is out
+            // of bounds (defensive — `AvPlayerEngine.init` keeps
+            // them consistent, but the queue snapshot may have
+            // been written by an older version that allowed drift).
+            if engine.queue.indices.contains(engine.currentIndex) {
+                return engine.queue[engine.currentIndex]
+            }
+            return engine.queue.first ?? PlayableTrack(
+                id: "", title: "Queue", artistName: "", albumTitle: "", albumId: ""
+            )
+        }()
+
+        ZStack(alignment: .trailing) {
+            Button {
+                showFullPlayer = true
+            } label: {
+                restoredChromeRow(track: track)
+            }
+            .buttonStyle(.plain)
+            .contentShape(Rectangle())
+
+            // Phase 3.C: a play button so the user can resume
+            // directly from the mini without opening the full
+            // player. Reuses the queue's `currentIndex` (the same
+            // one that was current when the app was last alive).
+            Button {
+                if engine.queue.indices.contains(engine.currentIndex) {
+                    engine.play(track: engine.queue[engine.currentIndex], in: engine.queue)
+                } else if let first = engine.queue.first {
+                    engine.play(track: first, in: engine.queue)
+                }
+            } label: {
+                Image(systemName: "play.fill")
+                    .font(.title2.weight(.semibold))
+                    .foregroundStyle(Color.mmAccentPrimary)
+                    .frame(width: 48, height: 48)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Resume queue")
+            .padding(.trailing, 4)
+        }
+        .frame(height: isVisible ? 64 : 0)
+        .opacity(isVisible ? 1 : 0)
+        .offset(y: isVisible ? 0 : 80)
+        .clipped()
+        .animation(.easeInOut(duration: 0.25), value: isVisible)
+    }
+
+    /// Visual chrome for the restored-queue state. Shows the
+    /// would-be-current track title + a "Resume" subtitle so the
+    /// user can tell this is their previous session, not a fresh
+    /// pick.
+    private func restoredChromeRow(track: PlayableTrack) -> some View {
+        HStack(spacing: 12) {
+            artwork(track: track)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(track.title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.mmPrimaryText)
+                    .lineLimit(1)
+                Text("Resume queue · \(track.artistName)")
+                    .font(.caption2)
+                    .foregroundStyle(Color.mmSecondaryText)
+                    .lineLimit(1)
+            }
+            Spacer().frame(width: 56)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity)
+        .background(
+            ZStack {
+                Color.mmBgCard
+                Rectangle()
+                    .fill(Color.mmTextDisabled.opacity(0.4))
+                    .frame(height: 0.5)
+                    .frame(maxHeight: .infinity, alignment: .top)
+            }
+            .shadow(color: .black.opacity(0.3), radius: 8, y: -2)
+        )
+        .contentShape(Rectangle())
     }
 
     /// The bar is a `ZStack` of two layers:
@@ -208,11 +356,13 @@ struct NowPlayingMiniView: View {
     }
 
     private func syncVisibility() {
-        let shouldBeVisible: Bool
-        switch engine.state {
-        case .idle, .error: shouldBeVisible = false
-        case .loading, .playing, .paused: shouldBeVisible = true
-        }
+        // Phase 3.C: visibility now considers `engine.queue` too.
+        // Before this change the mini only showed up when the
+        // engine had an active `state`, so a restored queue
+        // (queue non-empty, state = .idle) was invisible. Now we
+        // show the mini whenever either an active state is loaded
+        // OR a restored queue is sitting on disk.
+        let shouldBeVisible: Bool = !engine.queue.isEmpty
         if isVisible != shouldBeVisible {
             isVisible = shouldBeVisible
         }

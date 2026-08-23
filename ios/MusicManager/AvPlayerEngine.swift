@@ -86,6 +86,28 @@ final class AvPlayerEngine: ObservableObject {
 
     init(authStorage: AuthStorageBridge) {
         self.authStorage = authStorage
+
+        // Phase 3.C: restore the persisted queue from disk so cold
+        // launches land on the user's last playback context. We
+        // intentionally do NOT auto-resume playback — the engine
+        // stays in `.idle` until the user taps a track or hits
+        // play. The mini-bar shows the queue header with a play
+        // button (Apple Music convention) so the user can resume
+        // when they want. Auto-resume on launch is rejected for
+        // two reasons: (a) battery / cellular — opening the app
+        // should not silently start streaming; (b) the backend
+        // bearer may have been rotated while we were backgrounded,
+        // and the first `play()` call will 401 if so.
+        if let snap = QueueStore.load() {
+            self.queue = snap.queue
+            self.currentIndex = snap.currentIndex
+            self.isShuffled = snap.isShuffled
+            self.repeatMode = snap.repeatMode
+            // Stay in `.idle` until the user opts in. We don't try
+            // to restore the previous `EngineState` because the
+            // position-vs-duration stored there is stale and would
+            // race with the backend's view of playback.
+        }
     }
 
     /// Update the backend target host/port. The next `play()` call
@@ -93,6 +115,27 @@ final class AvPlayerEngine: ObservableObject {
     func updateBackend(host: String, port: String) {
         self.host = host
         self.port = port
+    }
+
+    // MARK: - Persistence (Phase 3.C)
+
+    /// Write the structural playback state to disk. Called from every
+    /// mutator that changes `queue`, `currentIndex`, `isShuffled`, or
+    /// `repeatMode`. NOT called from the position polling tick
+    /// because the tick mutates `state`, not the snapshot fields.
+    ///
+    /// We do NOT debounce — every structural change is user-initiated
+    /// (tap, toggle, next/prev), so the write rate is bounded by hand
+    /// speed, not playback speed. iOS coalesces the JSON encoding
+    /// onto the runloop tick we're already on.
+    private func persistSnapshot() {
+        let snap = QueueStore.Snapshot(
+            queue: queue,
+            currentIndex: currentIndex,
+            isShuffled: isShuffled,
+            repeatModeRaw: repeatMode.rawValue,
+        )
+        QueueStore.save(snap)
     }
 
     // MARK: - Playback control
@@ -120,6 +163,10 @@ final class AvPlayerEngine: ObservableObject {
         let targetIndex = tracks.firstIndex(of: track) ?? 0
         queue = tracks
         currentIndex = targetIndex
+        // Phase 3.C: persist before kicking off async AVPlayer setup.
+        // If the process dies during `startPlayback`, the queue is
+        // already on disk and the next cold launch restores it.
+        persistSnapshot()
         startPlayback(at: targetIndex)
     }
 
@@ -156,6 +203,7 @@ final class AvPlayerEngine: ObservableObject {
             nextIndex = (currentIndex + 1) % queue.count
         }
         currentIndex = nextIndex
+        persistSnapshot()
         startPlayback(at: nextIndex)
     }
 
@@ -168,6 +216,7 @@ final class AvPlayerEngine: ObservableObject {
             ? queue.count - 1
             : currentIndex - 1
         currentIndex = prevIndex
+        persistSnapshot()
         startPlayback(at: prevIndex)
     }
 
@@ -176,6 +225,7 @@ final class AvPlayerEngine: ObservableObject {
     func jumpTo(index: Int) {
         guard queue.indices.contains(index) else { return }
         currentIndex = index
+        persistSnapshot()
         startPlayback(at: index)
     }
 
@@ -203,6 +253,11 @@ final class AvPlayerEngine: ObservableObject {
     /// Stop and clear. The queue is dropped, the player is paused, the
     /// state returns to `.idle`. Subsequent `play(track:)` calls start
     /// fresh with a single-track queue.
+    ///
+    /// Phase 3.C: also wipes the on-disk snapshot so a cold launch
+    /// after `stop()` does not restore the cleared queue. If we
+    /// didn't do this the user would see "ghost tracks" in the
+    /// queue sheet on the next launch even though playback is idle.
     func stop() {
         avPlayer?.pause()
         avPlayer = nil
@@ -211,6 +266,7 @@ final class AvPlayerEngine: ObservableObject {
         currentIndex = -1
         state = .idle
         isPlaying = false
+        persistSnapshot()
     }
 
     /// Toggle shuffle on/off. When turning on, the next `next()` call
@@ -218,6 +274,7 @@ final class AvPlayerEngine: ObservableObject {
     /// linear walk.
     func toggleShuffle() {
         isShuffled.toggle()
+        persistSnapshot()
     }
 
     /// Cycle the repeat mode: off → all → one → off. Apple Music
@@ -228,6 +285,7 @@ final class AvPlayerEngine: ObservableObject {
         case .all: repeatMode = .one
         case .one: repeatMode = .off
         }
+        persistSnapshot()
     }
 
     // MARK: - Internal
@@ -403,7 +461,16 @@ enum EngineState: Equatable {
 
 /// Track metadata that the player engine needs. Mirrors what the
 /// KMP `db.Track` row will provide.
-struct PlayableTrack: Equatable, Hashable {
+///
+/// **Phase 3.C — Codable conformance for `QueueStore`**: the engine
+/// now persists `queue: [PlayableTrack]` to disk on every structural
+/// change (queue replace, jump, shuffle/repeat toggle) and restores it
+/// in `init`. We synthesise a default `Codable` impl rather than
+/// hand-rolling `CodingKeys` because all four fields are simple
+/// `String`s; if a non-`String` field is added later (e.g. a `Date` for
+/// `addedAt`), the compiler will fail the synthesis and force a
+/// decision.
+struct PlayableTrack: Equatable, Hashable, Codable {
     let id: String
     let title: String
     let artistName: String
@@ -434,7 +501,13 @@ struct AuthStorageBridge {
 /// Repeat mode for the queue walker. Cycles off → all → one via
 /// `AvPlayerEngine.toggleRepeat()`. The systemImageName / label
 /// helpers drive the chrome in NowPlayingView.
-enum RepeatMode: String, CaseIterable {
+///
+/// **Phase 3.C** — `String` raw value is what `QueueStore.Snapshot`
+/// stores (see `Snapshot.repeatModeRaw`), so a fresh enum case added
+/// later would just decode as `.off` instead of crashing on a stale
+/// schema. The auto-synthesised `Codable` impl encodes the rawValue
+/// directly because of the `String` raw type.
+enum RepeatMode: String, CaseIterable, Codable {
     case off
     case all
     case one

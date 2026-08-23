@@ -30,6 +30,16 @@ WHERE id = ?;
 selectTracksByDownloadState:
 SELECT * FROM track WHERE download_state = ?;
 
+-- Phase 3.D: lightweight projection for the iOS SettingsView
+-- "Descargas" section. Returns only `(id, download_state, local_path)`
+-- so the Swift-side `Map<Long, DownloadInfo>` doesn't have to
+-- deserialize full Track rows on every emission. `track` is small
+-- enough that a full-row projection would also work, but this keeps
+-- the per-track memory footprint minimal in case the library grows
+-- to 10k+ tracks.
+selectAllTrackDownloadStates:
+SELECT id, download_state, local_path FROM track;
+
 selectAllArtists:
 SELECT * FROM artist ORDER BY name COLLATE NOCASE;
 

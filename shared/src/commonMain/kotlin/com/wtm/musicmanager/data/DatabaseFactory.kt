@@ -2,6 +2,8 @@ package com.wtm.musicmanager.data
 
 import app.cash.sqldelight.db.SqlDriver
 import com.wtm.musicmanager.db.MusicManagerDatabase
+import com.wtm.musicmanager.download.DownloadStateRepository
+import com.wtm.musicmanager.download.SqlDelightDownloadStateRepository
 
 /**
  * Platform-specific factory that produces the [SqlDriver] backing the
@@ -43,15 +45,28 @@ object MusicManagerDatabaseFactory {
         val database: MusicManagerDatabase,
         val libraryRepository: LibraryRepository,
         val syncUpsertQueries: SyncUpsertQueries,
+        // Phase 3.D: per-track download state repo. The iOS
+        // SettingsView's "Descargas" section subscribes to
+        // `observeStates()` so it can show how many tracks are
+        // downloaded today. Android wires this in too, but the
+        // production download worker (Phase 5) is what flips the
+        // state — for now both clients flip state via the
+        // Settings UI's debug toggle.
+        val downloadStateRepository: DownloadStateRepository,
     )
 
     fun create(): Graph {
         val driver = createSqlDriver()
         val database = MusicManagerDatabase(driver)
+        val syncUpsertQueries = SqlDelightSyncUpsertQueries(database)
         return Graph(
             database = database,
             libraryRepository = SqlDelightLibraryRepository(database),
-            syncUpsertQueries = SqlDelightSyncUpsertQueries(database),
+            syncUpsertQueries = syncUpsertQueries,
+            downloadStateRepository = SqlDelightDownloadStateRepository(
+                db = database,
+                queries = syncUpsertQueries,
+            ),
         )
     }
 }
