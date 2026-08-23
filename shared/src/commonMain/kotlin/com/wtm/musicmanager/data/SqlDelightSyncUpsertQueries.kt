@@ -32,12 +32,19 @@ class SqlDelightSyncUpsertQueries(
     }
 
     override fun upsertArtist(artist: Artist, syncedAt: String) {
+        // v2 schema added `artist.cover_path` so the iOS / Android UI
+        // can render real artist artwork via `/api/library/covers/{path}`.
+        // The backend's `ArtistDto.imagePath` is the filesystem path
+        // we want here; we mirror it into both `cover_url` (legacy v1
+        // column, kept for compatibility with the desktop's URL path)
+        // and `cover_path` (v2 column, used by the mobile client).
         db.queriesQueries.upsertArtist(
             id = artist.id,
             name = artist.name,
             album_count = 0L,
             track_count = 0L,
             cover_url = artist.imagePath,
+            cover_path = artist.imagePath,
             synced_at = parseIso8601(syncedAt),
         )
     }

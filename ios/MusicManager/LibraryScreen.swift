@@ -28,6 +28,7 @@ struct LibraryScreen: View {
 
     @State private var artists: [SwiftArtist] = []
     @State private var tracks: [SwiftTrack] = []
+    @State private var albums: [MusicManagerShared.Album] = []
     @State private var selectedArtistId: Int64? = nil
     @State private var searchText: String = ""
     @State private var isLoading: Bool = true
@@ -54,6 +55,12 @@ struct LibraryScreen: View {
                                 .padding(.horizontal, 16)
                         }
                         .padding(.vertical, 16)
+                        // Reserve space for the mini player overlay in
+                        // MainTabView. When the engine is idle this is
+                        // 0 so we get the full vertical space; when
+                        // a track is loaded it adds 64 + 49 (tab bar)
+                        // so the last track row isn't hidden.
+                        .padding(.bottom, bottomPaddingForMiniPlayer)
                     }
                 }
             }
@@ -63,6 +70,16 @@ struct LibraryScreen: View {
         }
         .task {
             await observe()
+        }
+    }
+
+    /// Total bottom padding to reserve below the scroll content so the
+    /// mini player + tab bar don't hide the last row. Mirrors the
+    /// heights used in `MainTabView` and `NowPlayingMiniView`.
+    private var bottomPaddingForMiniPlayer: CGFloat {
+        switch player.state {
+        case .idle, .error: return 0
+        case .loading, .playing, .paused: return 64 + 49
         }
     }
 
@@ -87,15 +104,35 @@ struct LibraryScreen: View {
                 self.artists = artists
             }
         }
+        let albumsCollector = LibraryAlbumsCollector { albums in
+            Task { @MainActor in
+                self.albums = albums
+            }
+        }
 
         let tracksFlow = graph.libraryRepository.observeTracks(query: LibraryQuery.companion.Default)
         let artistsFlow = graph.libraryRepository.observeArtists()
+        let albumsFlow = graph.libraryRepository.observeAlbums(query: LibraryQuery.companion.Default)
 
         // Attach collectors. `collect(collector:completionHandler:)` is
         // the only way to subscribe to a Kotlin/Native Flow from Swift
         // (Pitfall #25 in the KMP bootstrap skill).
         tracksFlow.collect(collector: tracksCollector) { _ in }
         artistsFlow.collect(collector: artistsCollector) { _ in }
+        albumsFlow.collect(collector: albumsCollector) { _ in }
+    }
+
+    /// Resolve a track's `albumId` into a cover-art URL by looking up
+    /// the album in the observed `albums` list. Returns nil when no
+    /// album row has matched yet (album sync in flight) or when the
+    /// album has no `cover_path`. The caller (TrackRow) renders the
+    /// placeholder when this is nil.
+    private func coverURL(for albumId: Int64) -> URL? {
+        guard let album = albums.first(where: { $0.id == albumId }) else { return nil }
+        return CoverArtURLBuilder.url(
+            for: album.cover_path,
+            baseURL: URL(string: "http://\(graph.baseHost):\(graph.basePort)") ?? URL(string: "about:blank")!,
+        )
     }
 
     // MARK: - Derived data
@@ -121,31 +158,45 @@ struct LibraryScreen: View {
     // MARK: - UI sections
 
     private var statsRow: some View {
+        // Four tiles of equal visual weight:
+        //   - tracks count (informational — Library is the track tab
+        //     already, so this tile has no navigation target)
+        //   - albums count → pushes AlbumsListView
+        //   - artists count → pushes ArtistsListView
+        //   - shuffle → starts playback with the filtered list as
+        //     the queue, engine.isShuffled = true
+        //
+        // Each navigable tile renders a small chevron on the trailing
+        // edge so the navigation affordance is visually obvious —
+        // addresses the user note about "X artistas / X albumes
+        // deberian funcionar como puente a otras vistas".
         HStack(spacing: 10) {
-            statTile(value: "\(tracks.count)", label: "tracks", systemImage: "music.note")
-            statTile(value: "\(uniqueAlbumCount)", label: "albums", systemImage: "rectangle.stack")
-            statTile(value: "\(artists.count)", label: "artists", systemImage: "music.mic")
-            // Phase 3.B+: shuffle the current filtered list. Mirrors
-            // Spotify's "shuffle play" button on the home screen.
+            statTile(value: "\(tracks.count)", label: "pistas", systemImage: "music.note", chevron: false)
+
+            NavigationLink {
+                AlbumsListView(graph: graph, player: player)
+            } label: {
+                statTile(value: "\(uniqueAlbumCount)", label: "álbumes", systemImage: "rectangle.stack", chevron: true)
+            }
+            .buttonStyle(.plain)
+
+            NavigationLink {
+                ArtistsListView(graph: graph, player: player)
+            } label: {
+                statTile(value: "\(artists.count)", label: "artistas", systemImage: "music.mic", chevron: true)
+            }
+            .buttonStyle(.plain)
+
             Button {
                 shuffleAndPlayAll()
             } label: {
-                VStack(alignment: .leading, spacing: 6) {
-                    Image(systemName: "shuffle.circle.fill")
-                        .font(.callout)
-                        .foregroundStyle(Color.mmAccentPrimary)
-                    Text("Shuffle")
-                        .font(.title2.weight(.semibold))
-                        .foregroundStyle(Color.mmPrimaryText)
-                    Text("all tracks")
-                        .font(.caption)
-                        .foregroundStyle(Color.mmSecondaryText)
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.mmBgCard)
-                .clipShape(RoundedRectangle(cornerRadius: MusicManagerTheme.cornerRadius))
+                statTile(
+                    value: "Aleatoria",
+                    label: "todas las pistas",
+                    systemImage: "shuffle",
+                    chevron: false,
+                    accent: true,
+                )
             }
             .buttonStyle(.plain)
             .disabled(filteredTracks.isEmpty)
@@ -156,19 +207,41 @@ struct LibraryScreen: View {
         Set(tracks.map { $0.albumId }).count
     }
 
-    private func statTile(value: String, label: String, systemImage: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Image(systemName: systemImage)
-                .font(.callout)
-                .foregroundStyle(Color.mmAccentPrimary)
-            Text(value)
-                .font(.title2.weight(.semibold))
-                .foregroundStyle(Color.mmPrimaryText)
-            Text(label)
-                .font(.caption)
-                .foregroundStyle(Color.mmSecondaryText)
+    /// One stats tile. When `accent == true`, the leading icon uses
+    /// the brand yellow as a background so the Shuffle action stands
+    /// out without changing the tile's size or font hierarchy.
+    /// When `chevron == true`, a trailing chevron signals that the
+    /// tile navigates somewhere.
+    private func statTile(value: String, label: String, systemImage: String, chevron: Bool, accent: Bool = false) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            VStack(alignment: .leading, spacing: 6) {
+                ZStack {
+                    Circle()
+                        .fill(accent ? Color.mmAccentPrimary.opacity(0.18) : Color.mmBgCard)
+                        .frame(width: 28, height: 28)
+                    Image(systemName: systemImage)
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(Color.mmAccentPrimary)
+                }
+                Text(value)
+                    .font(.title2.weight(.semibold))
+                    .foregroundStyle(Color.mmPrimaryText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                Text(label)
+                    .font(.caption)
+                    .foregroundStyle(Color.mmSecondaryText)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            if chevron {
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.mmTextDisabled)
+                    .padding(.top, 4)
+            }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 12)
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.mmBgCard)
@@ -176,20 +249,61 @@ struct LibraryScreen: View {
     }
 
     private var artistsStrip: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Artists")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Color.mmSecondaryText)
+        // Phase 3.B+ polish: artists section redesigned from a
+        // horizontal-scroll chip strip into a vertical grid of
+        // circular avatars + a "Ver todos" link at the bottom. The
+        // horizontal scroll was hard to discover on small screens
+        // (iPhone 11) — the user reported "navegación por artistas
+        // complicada con scroll horizontal" because the strip
+        // visually looks like a category filter rather than a
+        // navigation list. The vertical grid is recognisable as a
+        // list at a glance, and tapping the tile / the "Ver todos"
+        // link both push `ArtistsListView` for full discovery.
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Tus artistas")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.mmSecondaryText)
+                Spacer()
+                NavigationLink {
+                    ArtistsListView(graph: graph, player: player)
+                } label: {
+                    HStack(spacing: 4) {
+                        Text("Ver todos")
+                            .font(.caption.weight(.semibold))
+                        Image(systemName: "chevron.right")
+                            .font(.caption2.weight(.semibold))
+                    }
+                    .foregroundStyle(Color.mmAccentPrimary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Ver todos los artistas")
+            }
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    artistChip(id: nil, name: "All", count: tracks.count)
-                    ForEach(artists) { artist in
-                        artistChip(
-                            id: artist.id,
-                            name: artist.name,
-                            count: tracks.filter { $0.artistId == artist.id }.count
-                        )
+            if artists.isEmpty {
+                Text("Sin artistas")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.mmSecondaryText)
+            } else {
+                LazyVGrid(
+                    columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
+                    spacing: 12,
+                ) {
+                    // Cap the visible grid to 6 artists (3 rows x 2 cols).
+                    // Beyond that the user taps "Ver todos" to reach
+                    // ArtistsListView. The cap keeps the library screen
+                    // scannable.
+                    ForEach(Array(artists.prefix(6))) { artist in
+                        NavigationLink {
+                            ArtistDetailView(
+                                graph: graph,
+                                artistId: artist.id,
+                                player: player,
+                            )
+                        } label: {
+                            artistGridTile(artist: artist)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -197,44 +311,39 @@ struct LibraryScreen: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func artistChip(id: Int64?, name: String, count: Int) -> some View {
-        let isSelected = (selectedArtistId == id)
-        return Button(action: { selectedArtistId = id }) {
-            HStack(spacing: 8) {
+    /// One artist tile in the grid. Uses the same circular initial
+    /// placeholder as `ArtistDetailView` for visual consistency.
+    ///
+    /// **Phase 3.B+ (2026-08-14) fix** — previously the tile's height
+    /// was driven by the name label (which wraps to 2 lines for
+    /// longer artist names). The grid's two columns then ended up
+    /// at different total heights because `LazyVGrid` distributes
+    /// rows independently. We now pin the tile to a fixed height
+    /// with `.frame(height: 116, alignment: .top)` and lay the
+    /// content out top-aligned so every cell is the same size
+    /// regardless of name length. The cover circle is exactly
+    /// 64pt, the name label is centered horizontally below it.
+    private func artistGridTile(artist: SwiftArtist) -> some View {
+        VStack(spacing: 8) {
+            ZStack {
                 Circle()
-                    .fill(isSelected ? Color.mmAccentPrimary : Color.mmBgCard)
-                    .frame(width: 24, height: 24)
-                    .overlay {
-                        Text(name.prefix(1))
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(isSelected ? Color.mmBgBase : Color.mmPrimaryText)
-                    }
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(name)
-                        .font(.subheadline.weight(.semibold))
-                    Text("\(count) tracks")
-                        .font(.caption2)
-                        .foregroundStyle(Color.mmSecondaryText)
-                }
+                    .fill(Color.mmBgCard)
+                Text(artist.name.prefix(1).uppercased())
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(Color.mmAccentPrimary)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                isSelected
-                    ? Color.mmBgCard
-                    : Color.mmBgCard.opacity(0.6)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 14)
-                    .strokeBorder(
-                        isSelected ? Color.mmAccentPrimary : Color.clear,
-                        lineWidth: 1.5
-                    )
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 14))
-            .foregroundStyle(Color.mmPrimaryText)
+            .frame(width: 64, height: 64)
+            .shadow(color: .black.opacity(0.2), radius: 4, y: 2)
+
+            Text(artist.name)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.mmPrimaryText)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .multilineTextAlignment(.center)
         }
-        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
+        .frame(height: 96)
     }
 
     private var tracksList: some View {
@@ -254,34 +363,33 @@ struct LibraryScreen: View {
             } else {
                 VStack(spacing: 0) {
                     ForEach(Array(filteredTracks.enumerated()), id: \.element.id) { idx, track in
-                        // Phase 3.B tap-to-play: tapping a row starts
-                        // playback of that track. The SwiftTrack.id is
-                        // Int64 (SQLDelight row id) but PlayableTrack.id
-                        // is String (because the player URL embeds it as
-                        // /api/stream/{id}). Convert at the wire boundary.
-                        TrackRow(track: track) {
-                            // Phase 3.B+ queue: tapping a row starts
-                            // playback of that track AND seeds the
-                            // queue with the filtered list so
-                            // next/previous walk the visible library
-                            // rather than just swapping single tracks.
-                            // The SwiftTrack.id is Int64 (SQLDelight
-                            // row id) but PlayableTrack.id is String
-                            // (because the player URL embeds it as
-                            // /api/stream/{id}). Convert at the wire
-                            // boundary.
-                            let queue = playableQueue(from: filteredTracks)
-                            player.play(
-                                track: PlayableTrack(
-                                    id: String(track.id),
-                                    title: track.title,
-                                    artistName: track.artistName,
-                                    albumTitle: track.albumTitle,
-                                    albumId: String(track.albumId),
-                                ),
-                                in: queue,
-                            )
-                        }
+                        // Phase 3.B+ queue: tapping a row starts
+                        // playback of that track AND seeds the
+                        // queue with the filtered list so
+                        // next/previous walk the visible library
+                        // rather than just swapping single tracks.
+                        // The SwiftTrack.id is Int64 (SQLDelight
+                        // row id) but PlayableTrack.id is String
+                        // (because the player URL embeds it as
+                        // /api/stream/{id}). Convert at the wire
+                        // boundary.
+                        TrackRow(
+                            track: track,
+                            coverURL: coverURL(for: track.albumId),
+                            onTap: {
+                                let queue = playableQueue(from: filteredTracks)
+                                player.play(
+                                    track: PlayableTrack(
+                                        id: String(track.id),
+                                        title: track.title,
+                                        artistName: track.artistName,
+                                        albumTitle: track.albumTitle,
+                                        albumId: String(track.albumId),
+                                    ),
+                                    in: queue,
+                                )
+                            },
+                        )
                         if idx < filteredTracks.count - 1 {
                             Divider()
                                 .background(Color.mmTextDisabled.opacity(0.2))
@@ -419,6 +527,11 @@ extension SwiftTrack {
 struct SwiftArtist: Identifiable, Hashable {
     let id: Int64
     let name: String
+    /// Phase 3.B+ (2026-08-14): mirrored from `Artist.cover_path`
+    /// (set from `ArtistDto.imagePath` in the sync upsert). Used by
+    /// ArtistsListView + ArtistDetailView to render real artist
+    /// artwork via `/api/library/covers/{path}`.
+    let coverPath: String?
 }
 
 extension SwiftArtist {
@@ -427,6 +540,7 @@ extension SwiftArtist {
         // declared `id` / `name` and the bridge preserves those names.
         self.id = artist.id
         self.name = artist.name
+        self.coverPath = artist.cover_path
     }
 }
 
@@ -434,6 +548,7 @@ extension SwiftArtist {
 
 private struct TrackRow: View {
     let track: SwiftTrack
+    let coverURL: URL?
     var onTap: () -> Void = {}
 
     var body: some View {
@@ -468,13 +583,54 @@ private struct TrackRow: View {
         .onTapGesture { onTap() }
     }
 
+    /// Album cover art for this track row. We use the row's
+    /// `coverURL` (passed by the parent) so the same CoverArtImage
+    /// handles placeholder / loading / failure uniformly. The
+    /// placeholder is seeded with the track title so neighbouring
+    /// tracks get visibly different gradients.
     private var trackArtwork: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(Color.mmBgBase)
-            Image(systemName: "music.note")
-                .font(.caption)
-                .foregroundStyle(Color.mmAccentPrimary)
+        CoverArtImage(
+            coverPath: nil,
+            baseURL: URL(string: "about:blank")!,
+            contentMode: .fill,
+            placeholderSeed: track.title,
+            placeholder: {
+                CoverArtPlaceholder(
+                    seed: track.title,
+                    systemImage: "music.note",
+                    cornerRadius: 6,
+                    initial: track.title.first.map(String.init),
+                )
+            },
+            failure: {
+                CoverArtPlaceholder(
+                    seed: track.title,
+                    systemImage: "music.note",
+                    cornerRadius: 6,
+                    initial: track.title.first.map(String.init),
+                )
+            },
+        )
+        .overlay {
+            // When we have a real cover URL, layer the AsyncImage on
+            // top of the placeholder so the gradient shows through
+            // during loading and the placeholder stays visible if
+            // the network request fails.
+            if let coverURL {
+                AsyncImage(url: coverURL) { phase in
+                    switch phase {
+                    case .empty:
+                        Color.clear
+                    case .success(let image):
+                        image.resizable().scaledToFill()
+                    case .failure:
+                        Color.clear
+                    @unknown default:
+                        Color.clear
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
         }
         .frame(width: 38, height: 38)
     }
@@ -525,6 +681,25 @@ private final class ArtistsCollector: NSObject, Kotlinx_coroutines_coreFlowColle
             // type so the local `struct Artist` from
             // `LibraryMockScreen.swift` is not used.
             let mapped = list.compactMap { $0 as? MusicManagerShared.Artist }.map(SwiftArtist.init)
+            onEmit(mapped)
+        } else {
+            onEmit([])
+        }
+        completionHandler(nil)
+    }
+}
+
+/// Album collector for LibraryScreen. We only need the rows to
+/// resolve `albumId → coverPath` for TrackRow's cover art, so we
+/// keep them around as `MusicManagerShared.Album` (the SQLDelight row
+/// type) without projecting to a separate Swift type.
+private final class LibraryAlbumsCollector: NSObject, Kotlinx_coroutines_coreFlowCollector {
+    private let onEmit: ([MusicManagerShared.Album]) -> Void
+    init(onEmit: @escaping ([MusicManagerShared.Album]) -> Void) { self.onEmit = onEmit }
+
+    func emit(value: Any?, completionHandler: @escaping (Error?) -> Void) {
+        if let list = value as? [Any] {
+            let mapped = list.compactMap { $0 as? MusicManagerShared.Album }
             onEmit(mapped)
         } else {
             onEmit([])

@@ -3,8 +3,8 @@
 -- when backend supports tombstones in /api/v1/sync/changes).
 
 upsertArtist:
-INSERT OR REPLACE INTO artist(id, name, album_count, track_count, cover_url, synced_at)
-VALUES (?, ?, ?, ?, ?, ?);
+INSERT OR REPLACE INTO artist(id, name, album_count, track_count, cover_url, cover_path, synced_at)
+VALUES (?, ?, ?, ?, ?, ?, ?);
 
 upsertAlbum:
 INSERT OR REPLACE INTO album(id, title, artist_id, artist_name, year, track_count, duration_ms, cover_url, cover_path, is_downloaded, synced_at)

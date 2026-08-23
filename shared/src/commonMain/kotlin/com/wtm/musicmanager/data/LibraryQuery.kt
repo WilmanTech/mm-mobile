@@ -25,5 +25,23 @@ data class LibraryQuery(
 
     companion object {
         val Default = LibraryQuery()
+
+        /**
+         * Convenience for the iOS detail screens that want to scope
+         * the result to a single album. Swift's bridging of Kotlin
+         * data-class constructors doesn't honour default arguments
+         * (they all become `nil` / `0`), so SwiftUI detail screens
+         * that need anything other than [Default] go through one of
+         * these named factories instead of the raw constructor.
+         *
+         * Limits to 500 tracks — enough for any album in the demo
+         * fixture, and within the `require(limit in 1..5_000)` check
+         * in [init].
+         */
+        fun forAlbum(albumId: Long, limit: Long = 500): LibraryQuery =
+            LibraryQuery(albumId = albumId, limit = limit)
+
+        fun forArtist(artistId: Long, limit: Long = 500): LibraryQuery =
+            LibraryQuery(artistId = artistId, limit = limit)
     }
 }

@@ -7,6 +7,10 @@ CREATE TABLE artist (
     album_count INTEGER NOT NULL DEFAULT 0,
     track_count INTEGER NOT NULL DEFAULT 0,
     cover_url TEXT,
+    -- Phase 3.B+ (2026-08-14): mirrors `ArtistDto.imagePath` from the
+    -- backend so the mobile client can render real artist artwork
+    -- via `/api/library/covers/{path}`. Mirrors `album.cover_path`.
+    cover_path TEXT,
     synced_at INTEGER NOT NULL
 );
 

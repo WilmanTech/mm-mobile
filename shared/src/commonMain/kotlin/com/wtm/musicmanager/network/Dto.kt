@@ -119,6 +119,77 @@ data class SyncResponse(
 //      Polled by the app until confirmed=true.
 //   4. All subsequent requests use `Authorization: Bearer <token>`.
 
+/**
+ * Library stats from `/api/library/stats`. Used by the iOS Home
+ * screen to render the summary card.
+ */
+@Serializable
+data class LibraryStatsDto(
+    @SerialName("total_tracks") val totalTracks: Long = 0,
+    @SerialName("total_albums") val totalAlbums: Long = 0,
+    @SerialName("total_artists") val totalArtists: Long = 0,
+    @SerialName("total_duration_ms") val totalDurationMs: Long = 0,
+    @SerialName("total_size_bytes") val totalSizeBytes: Long = 0,
+    @SerialName("codecs") val codecs: List<CodecStatDto> = emptyList(),
+    @SerialName("quality_breakdown") val qualityBreakdown: QualityBreakdownDto = QualityBreakdownDto(),
+)
+
+@Serializable
+data class CodecStatDto(
+    val codec: String = "",
+    val count: Long = 0,
+    @SerialName("size_bytes") val sizeBytes: Long = 0,
+)
+
+@Serializable
+data class QualityBreakdownDto(
+    val lossless: QualityTier = QualityTier(),
+    val high: QualityTier = QualityTier(),
+)
+
+@Serializable
+data class QualityTier(
+    val count: Long = 0,
+    @SerialName("size_bytes") val sizeBytes: Long = 0,
+)
+
+/**
+ * Recently-played track row from `/api/library/recent/tracks`.
+ * Already-flattened on the backend (artist + album + cover are
+ * inline strings, not nested objects), so we mirror that shape.
+ */
+@Serializable
+data class RecentTrackDto(
+    val id: Long,
+    @SerialName("album_id") val albumId: Long? = null,
+    val title: String,
+    @SerialName("duration_ms") val durationMs: Long? = null,
+    val bitrate: Int? = null,
+    @SerialName("last_played") val lastPlayed: String? = null,
+    @SerialName("play_count") val playCount: Int = 0,
+    val artist: String,
+    val album: String,
+    @SerialName("album_cover") val albumCover: String? = null,
+    @SerialName("is_favorite") val isFavorite: Boolean = false,
+    @SerialName("is_cover") val isCover: Boolean = false,
+    @SerialName("is_live") val isLive: Boolean = false,
+)
+
+/**
+ * Recently-played album from `/api/library/recent/albums`. Already
+ * flattened — `artist` is an inline string.
+ */
+@Serializable
+data class RecentAlbumDto(
+    val id: Long,
+    val title: String,
+    val year: Int? = null,
+    val genre: String? = null,
+    @SerialName("cover_path") val coverPath: String? = null,
+    val artist: String,
+    @SerialName("last_played") val lastPlayed: String? = null,
+)
+
 @Serializable
 data class PairingStartRequest(
     @SerialName("device_type") val deviceType: String? = null,

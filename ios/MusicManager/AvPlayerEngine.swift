@@ -139,13 +139,19 @@ final class AvPlayerEngine: ObservableObject {
             // ahead of the current one to avoid feeling random.
             let candidates = (0..<queue.count).filter { $0 != currentIndex }
             nextIndex = candidates.randomElement() ?? 0
-        } else if currentIndex >= queue.count - 1 && repeatMode == .all {
-            // Wrap to start when repeat is on.
+        } else if currentIndex >= queue.count - 1 {
+            // Phase 3.B+ (2026-08-14) behaviour change: when the
+            // user reaches the end of the queue, wrap back to index
+            // 0 (Apple Music behaviour) instead of stopping
+            // playback silently. Previously the engine returned
+            // silently when repeat was off and the user had to
+            // manually press play; the user reported "fin cancion
+            // no hace nada". Auto-play continues so the queue feels
+            // like a single continuous listening session. If the
+            // user wants strict queue-end behaviour they can tap
+            // pause, switch to repeat-one, or set repeat to off
+            // and stop manually.
             nextIndex = 0
-        } else if currentIndex >= queue.count - 1 && repeatMode == .off {
-            // End of queue, repeat is off — stop playback instead of
-            // looping. The user can tap play/next manually to restart.
-            return
         } else {
             nextIndex = (currentIndex + 1) % queue.count
         }

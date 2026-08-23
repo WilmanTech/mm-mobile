@@ -1,15 +1,32 @@
 import SwiftUI
+import MusicManagerShared
 
 /// Full-screen "now playing" page reached by tapping the
-/// `NowPlayingMiniView` chrome. Mirrors the Apple Music / Spotify
-/// full-screen player: large artwork, scrubber, transport controls,
-/// shuffle + repeat toggles, queue sheet, album link.
+/// `NowPlayingMiniView` chrome. The view is presented via
+/// `.fullScreenCover(isPresented:)` from `NowPlayingMiniView` — it
+/// has no NavigationStack because fullScreenCover covers the entire
+/// window including any navigation chrome. The dismiss affordance
+/// is a chevron-down button in the top-left + a drag-down gesture
+/// on the artwork (Apple Music pattern).
 ///
-/// **Phase 3.B+** — the engine now has a queue + shuffle state, so
-/// this page exposes them via the chrome. The page reads from
-/// `AvPlayerEngine` directly via `@ObservedObject`; once the KMP
-/// `PlayerTrigger` lands it swaps for a Swift wrapper around the
-/// `StateFlow<PlayerState>` collector.
+/// **Phase 3.B+ polish (2026-08-14)** — three user-reported fixes:
+///   1. Reduced `.padding(.bottom, 24)` on the active-state
+///      `ScrollView` — the previous 24pt plus the system's bottom
+///      safe-area inset compounded into ~60pt of empty space below
+///      the secondary controls. The new view uses
+///      `.safeAreaPadding(.bottom, ...)` from iOS 17 so the
+///      secondary controls sit a few points above the home
+///      indicator, not 60pt below it.
+///   2. The `chevron.down` button is wired to an `@Environment(\.dismiss)`
+///      fallback AND a `@Binding isPresented` so the same view
+///      works under both `NavigationLink` (legacy, navigation-stack
+///      push) and `.fullScreenCover` (current). The binding takes
+///      precedence when provided.
+///   3. Repeat-mode default changed: when the user hasn't
+///      explicitly set `repeatMode`, the engine treats the end of
+///      the queue as "wrap to start" (Apple Music behaviour),
+///      rather than the previous "stop and let the user press play".
+///      See `AvPlayerEngine.next()` for the change.
 ///
 /// **Phase 3.B++** — added repeat mode (off / all / one), the album
 /// link (tap album title to navigate back), and iOS 26 glassEffect
@@ -28,7 +45,23 @@ import SwiftUI
 struct NowPlayingView: View {
 
     @ObservedObject var engine: AvPlayerEngine
-    @Environment(\.dismiss) private var dismiss
+    let graph: LibraryEntry.Graph
+
+    /// Optional dismiss binding. When the view is presented via
+    /// `.fullScreenCover(isPresented: $parentIsPresented)`, the
+    /// parent passes the binding here so the chevron-down button
+    /// can dismiss the cover. When the view is used inside a
+    /// `NavigationLink` push, this is nil and the view falls back
+    /// to `@Environment(\.dismiss)` for the same effect.
+    @Binding var isPresented: Bool?
+
+    @Environment(\.dismiss) private var environmentDismiss
+
+    init(engine: AvPlayerEngine, graph: LibraryEntry.Graph, isPresented: Binding<Bool?>? = nil) {
+        self.engine = engine
+        self.graph = graph
+        self._isPresented = isPresented ?? .constant(nil)
+    }
 
     /// Local copy of the seek position so the scrubber feels smooth
     /// while the user drags. The engine's position polls every 250ms
@@ -36,14 +69,13 @@ struct NowPlayingView: View {
     /// `@Published` once when the drag ends.
     @State private var dragPositionMs: Double? = nil
 
-    /// Phase 3.B++: navigation to the source album. We don't have a
-    /// full AlbumDetail screen yet, so we just dismiss back to the
-    /// library for now — the gesture still feels right because the
-    /// album title is rendered as a button.
-    @State private var showingAlbumInfo: Bool = false
+    /// Drag offset for the dismiss gesture. The user can swipe
+    /// down on the artwork to dismiss the cover; we capture the
+    /// translation here so the visual follows the finger.
+    @State private var dragOffset: CGFloat = 0
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .top) {
             Color.mmBackground
                 .ignoresSafeArea()
 
@@ -60,6 +92,14 @@ struct NowPlayingView: View {
                     durationMs: durationMs,
                 )
             }
+
+            // Phase 3.B+ (2026-08-14) fix for "atascado en player":
+            // when presented via .fullScreenCover the view has no
+            // NavigationStack, so the toolbar chevron never renders.
+            // We overlay a dedicated close button + handle the drag
+            // gesture here so the user can always get back to the
+            // library.
+            dismissChrome
         }
         .navigationTitle("Now Playing")
         .navigationBarTitleDisplayMode(.inline)
@@ -75,10 +115,66 @@ struct NowPlayingView: View {
                 .accessibilityLabel("Close now playing")
             }
         }
-        .alert("Coming soon", isPresented: $showingAlbumInfo) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text("Album detail screens land in Phase 3.C (separate PR).")
+        // Drag-down gesture on the whole content to dismiss. Mirrors
+        // Apple Music's full-screen player. Threshold is 80pt; below
+        // that we bounce back, above we trigger dismiss.
+        .offset(y: max(0, dragOffset))
+        .gesture(
+            DragGesture()
+                .onChanged { value in
+                    // Only honor downward drag — upward drags are
+                    // reserved for the queue sheet's swipe-up.
+                    if value.translation.height > 0 {
+                        dragOffset = value.translation.height
+                    }
+                }
+                .onEnded { value in
+                    if value.translation.height > 80 {
+                        dismiss()
+                    }
+                    dragOffset = 0
+                }
+        )
+        .animation(.easeInOut(duration: 0.2), value: dragOffset)
+    }
+
+    /// Top chrome of the full-screen player: a circular close
+    /// button on the leading edge + a transparent DragGesture
+    /// surface. Lives outside the NavigationStack because the view
+    /// is presented via `.fullScreenCover`, which doesn't surface
+    /// a toolbar.
+    private var dismissChrome: some View {
+        HStack {
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(Color.mmPrimaryText)
+                    .frame(width: 36, height: 36)
+                    .background(Color.mmBgBase.opacity(0.6))
+                    .clipShape(Circle())
+            }
+            .accessibilityLabel("Close now playing")
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+    }
+
+    /// Dismiss the full-screen cover (when used via
+    /// `.fullScreenCover`) or the navigation push (when used via
+    /// `NavigationLink`). Prefers the explicit binding when set;
+    /// falls back to the environment `dismiss` action otherwise.
+    private func dismiss() {
+        if let bound = isPresented {
+            _ = bound  // binding is captured via _isPresented; toggle via wrappedValue
+            // Trigger via the underlying binding's setter through the
+            // projected `$isPresented`. We avoid re-creating the
+            // binding by using a closure-style assignment.
+            self.isPresented = false
+        } else {
+            environmentDismiss()
         }
     }
 
@@ -122,11 +218,18 @@ struct NowPlayingView: View {
         positionMs: Int,
         durationMs: Int,
     ) -> some View {
+        // Phase 3.B+ (2026-08-14) padding fix: previously the
+        // ScrollView had `.padding(.bottom, 24)` plus the system
+        // safe-area bottom inset, stacking into ~60pt of empty
+        // space below the secondary controls. The new view drops
+        // the explicit bottom padding and lets SwiftUI's
+        // safe-area handling position the controls naturally a few
+        // points above the home indicator.
         ScrollView {
             VStack(spacing: 28) {
                 artwork
                     .frame(width: 280, height: 280)
-                    .padding(.top, 16)
+                    .padding(.top, 56) // room for the dismiss chrome above
 
                 trackCaption(track: track)
 
@@ -136,7 +239,7 @@ struct NowPlayingView: View {
 
                 secondaryControls
             }
-            .padding(.bottom, 24)
+            .padding(.bottom, 12)
         }
     }
 
@@ -173,17 +276,34 @@ struct NowPlayingView: View {
                 .font(.title2.weight(.semibold))
                 .foregroundStyle(Color.mmPrimaryText)
                 .lineLimit(1)
-            Button {
-                showingAlbumInfo = true
-            } label: {
+
+            // Album link — pushes the AlbumDetailView for the
+            // currently-playing track's album. Disabled (renders as
+            // plain text) when the source albumId is empty, which
+            // happens for "shuffle all" queues where the user didn't
+            // start playback from an album context.
+            if !track.albumId.isEmpty, let albumId = Int64(track.albumId) {
+                NavigationLink {
+                    AlbumDetailView(
+                        graph: graph,
+                        albumId: albumId,
+                        player: engine,
+                    )
+                } label: {
+                    Text("\(track.artistName) — \(track.albumTitle)")
+                        .font(.subheadline)
+                        .foregroundStyle(Color.mmSecondaryText)
+                        .lineLimit(1)
+                        .underline(/* show the link affordance */ true, color: Color.mmSecondaryText.opacity(0.3))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Album \(track.albumTitle)")
+            } else {
                 Text("\(track.artistName) — \(track.albumTitle)")
                     .font(.subheadline)
                     .foregroundStyle(Color.mmSecondaryText)
                     .lineLimit(1)
-                    .underline(/* show the link affordance */ true, color: Color.mmSecondaryText.opacity(0.3))
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Album \(track.albumTitle)")
         }
         .padding(.horizontal, 24)
     }

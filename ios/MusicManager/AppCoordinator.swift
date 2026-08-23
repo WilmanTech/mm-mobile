@@ -494,6 +494,21 @@ final class AppCoordinator: ObservableObject {
                 }
             }
             phase = Self.phase(from: state)
+            // v2026-08-14 follow-up fix: when `restore()` transitions
+            // straight into `.paired` (cold launch with a valid token),
+            // the StateFlow is already at `.Paired` by the time
+            // `startObserving()` subscribes below. The observer's
+            // "entering .paired" branch therefore never fires
+            // (previousPhase == .paired already) and `libraryGraph`
+            // stays nil — the user lands on `PairedScreen` (which is
+            // only meant for the brief 1-frame gap between .paired
+            // and rebuildLibraryGraph) instead of `MainTabView`. We
+            // call `rebuildLibraryGraph()` explicitly here when the
+            // restored state is paired, so the cold-launch path goes
+            // through the same graph-build as a fresh pair.
+            if case .paired = phase {
+                rebuildLibraryGraph()
+            }
         } catch {
             // restore() failures are non-fatal — leave phase as Idle and let
             // the user try to pair again from the UI.
