@@ -34,11 +34,11 @@ echo "════════════════════════�
 
 echo ""
 echo "▸ iPhone status..."
+DEVICE_LINE=$(xcrun devicectl list devices 2>&1 | grep "$DEVICE_UDID")
 # Output format: "<name with spaces>  <hostname>  <UDID>  <state>  <model>"
 # The human name has spaces, so we can't use $N positional awk fields
 # reliably. Instead, grep the UDID line and split on the UDID, then take
 # the field after it (the state).
-DEVICE_LINE=$(xcrun devicectl list devices 2>&1 | grep "$DEVICE_UDID")
 DEVICE_STATE=$(echo "$DEVICE_LINE" | awk -v udid="$DEVICE_UDID" '{
   # Find UDID position, take next non-empty field
   for (i=1;i<=NF;i++) if ($i == udid) { print $(i+1); exit }
@@ -54,18 +54,28 @@ case "$DEVICE_STATE" in
         ;;
 esac
 
+# Phase 3.D follow-up (2026-08-24): warn the user upfront that
+# iOS auto-locks the screen every ~30s by default, which causes
+# subsequent launches from this script to fail with "Locked"
+# errors. The unlock requirement is "screen on AND unlocked"
+# — Face ID alone doesn't satisfy it. The user must physically
+# tap the screen or use Raise to Wake before each deploy.
+echo ""
+echo "  ⓘ  Keep the iPhone screen UNLOCKED during the smoke."
+echo "     iOS auto-locks after ~30s of inactivity. Re-run this"
+echo "     script if the launch below reports 'Locked'."
+
 echo ""
 echo "▸ App binary..."
 if [ ! -d "$APP_PATH" ]; then
     echo "  ✗ .app not found at $APP_PATH"
-    echo "    Run: cd ~/projects/mm-mobile/ios && xcodebuild -workspace MusicManager.xcworkspace -scheme MusicManager -configuration Debug -sdk iphoneos -destination 'generic/platform=iOS' -allowProvisioningUpdates -allowProvisioningDeviceRegistration -derivedDataPath ~/Library/Developer/Xcode/DerivedData/MusicManager-device build"
+    echo "    Run: cd ~/projects/mm-mobile/ios && xcodebuild -workspace MusicManager.xcworkspace -scheme MusicManager -configuration Debug -sdk iphoneos -destination 'generic/platform=iOS' -allowProvisioningUpdates -allowProvisioningDeviceRegistration -derivedDataPath ~/Library/Developer/Xcode/DerivedData/MusicManager-device ENABLE_DEBUG_DYLIB=NO build"
     exit 1
 fi
 echo "  ✓ App at $APP_PATH"
 
 echo ""
 echo "▸ Backend..."
-if ! curl -sS --max-time 3 "$BACKEND/api/library/recent/tracks" -o /dev/null -w "%{http_code}" 2>&1 | grep -qE "200|401"; then
     echo "  ✗ Backend not reachable at $BACKEND"
     echo "    Start: cd ~/projects/MusicManager/backend && source .venv/bin/activate && uvicorn main:app --host 0.0.0.0 --port 8765"
     exit 1
