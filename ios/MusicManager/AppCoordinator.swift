@@ -32,10 +32,47 @@ final class AppCoordinator: ObservableObject {
     }
 
     @Published var phase: Phase = .idle
-    @Published var host: String = "127.0.0.1"
-    @Published var port: String = "8765"
+    @Published var host: String = AppCoordinator.persistedHost()
+    @Published var port: String = AppCoordinator.persistedPort()
     @Published var lastError: String?
     @Published var showPreview: Bool = false
+
+    // MARK: - Host/Port persistence
+
+    /// UserDefaults keys for the last-used backend host/port. We persist
+    /// these so the PairingScreen doesn't snap back to 127.0.0.1 on
+    /// every cold launch — without this, users had to edit the host
+    /// field after every reinstall because the default
+    /// `127.0.0.1` points at the device's own loopback, not the Mac
+    /// running the MusicManager backend.
+    private static let kHostKey = "mm_backend_host"
+    private static let kPortKey = "mm_backend_port"
+
+    /// Default host is the device's loopback. PersistedHost overrides
+    /// it with whatever the user typed last.
+    private static func persistedHost() -> String {
+        if let saved = UserDefaults.standard.string(forKey: kHostKey),
+           !saved.isEmpty {
+            return saved
+        }
+        return "127.0.0.1"
+    }
+
+    private static func persistedPort() -> String {
+        if let saved = UserDefaults.standard.string(forKey: kPortKey),
+           !saved.isEmpty {
+            return saved
+        }
+        return "8765"
+    }
+
+    /// Write the current host/port to UserDefaults so the next cold
+    /// launch picks them up. Called from `updateBackend(...)` so we
+    /// also persist any in-session edits the user made via the form.
+    private func persistBackend() {
+        UserDefaults.standard.set(host, forKey: Self.kHostKey)
+        UserDefaults.standard.set(port, forKey: Self.kPortKey)
+    }
 
     /// Library graph wired by Phase 4.A.4 — populated the moment the app
     /// transitions into `.paired` and reset on `unpair()`. Swift views
@@ -74,8 +111,30 @@ final class AppCoordinator: ObservableObject {
     private var syncTask: Task<Void, Never>?
 
     init() {
-        startObserving()
+        // v2026-08-14 fix: previously we called `startObserving()` BEFORE
+        // `restoreFromDisk()`. That created a race: the StateFlow's initial
+        // value (`PairingState.Idle`) was emitted to the SwiftUI `@Published
+        // var phase` before restore could write the persisted `Paired`
+        // state. Because SwiftUI sometimes does not re-render the body when
+        // a Published var changes before the view first appears, users landed
+        // on PairingScreen after every cold launch despite having a valid
+        // bearer on disk.
+        //
+        // The new order is:
+        //   1. `restoreFromDisk()` synchronously loads the bearer from
+        //      NSUserDefaults and validates it against the backend. If a
+        //      Paired state comes back, the StateFlow is updated before any
+        //      observer is attached.
+        //   2. `startObserving()` attaches the StateFlow collector. Its
+        //      first emission is now the restored state, not Idle.
+        //
+        // DEBUG-only MM_TEST_TOKEN path below still calls startObserving()
+        // before restore() because that path bypasses restore() entirely
+        // and synthesises a Paired state itself.
         Task { await restoreFromDisk() }
+        // startObserving() is called from restoreFromDisk()'s completion
+        // path so the first emission the SwiftUI body sees is the
+        // restored state. See restoreFromDisk() below.
 
         #if DEBUG
         // Visual review mode: when MM_VISUAL_REVIEW=1 is set (typically via
@@ -167,6 +226,9 @@ final class AppCoordinator: ObservableObject {
     func updateBackend(host: String, port: String) {
         self.host = host
         self.port = port
+        // Persist so the next cold launch / reinstall doesn't snap
+        // back to the 127.0.0.1 default.
+        persistBackend()
         pairingRepository = makePairingRepository(host: host, port: port)
         startObserving()
         if case .paired = phase {
@@ -189,11 +251,71 @@ final class AppCoordinator: ObservableObject {
     /// anything other than an empty list.
     private func rebuildLibraryGraph() {
         syncTask?.cancel()
-        libraryGraph = LibraryEntry.shared.make(host: host, port: port, tokenStore: authStorage)
-        guard let graph = libraryGraph else { return }
+        // Use the safe `makeOrNull` variant — see LibraryEntry.kt
+        // for the rationale. Returning nil surfaces as a banner
+        // in the UI rather than a K/N SIGABRT.
+        //
+        // Phase 3.D follow-up (2026-08-24): NSLog the path and
+        // AppPathHolder state so the user can see the diagnostic
+        // in Xcode → Window → Devices → iPhone 11 → Open Console
+        // when the red error card appears. The previous
+        // implementation only set `coordinator.lastError` which
+        // was rendered by SettingsView — useless when the user
+        // is stuck on the post-pairing placeholder with no way to
+        // navigate elsewhere.
+        NSLog("MM_DEBUG init: host=%@ port=%@", host, port)
+        let pathIsInitialized: Bool = AppPathHolder.shared.isInitialized
+        let pathValue: String? = pathIsInitialized ? AppPathHolder.shared.require() : nil
+        NSLog("MM_DEBUG init: AppPathHolder.isInitialized=%d value=%@", pathIsInitialized ? 1 : 0, pathValue ?? "<nil>")
+        let graph = LibraryEntry.shared.makeOrNull(host: host, port: port, tokenStore: authStorage)
+        NSLog("MM_DEBUG init: makeOrNull returned %@", graph == nil ? "nil (FAILURE)" : "graph (OK)")
+        libraryGraph = graph
+        guard let graph = libraryGraph else {
+            // Phase 3.D v3: pull the KMP-captured exception details
+            // from `LibraryEntry.lastError`. This is set as a
+            // side effect of makeOrNull's try-catch and is the
+            // only way to surface the underlying Kotlin exception
+            // to the user — K/N can't propagate the exception
+            // through the bridge without an explicit @Throws.
+            //
+            // v2026-08-24 follow-up: the KMP detail IS the user-facing
+            // message. The previous wrapper ("Library init failed. /
+            // Path=… / KMP detail: …") pushed the exception below the
+            // fold of `Text(message).lineLimit(4)` so the user only
+            // saw the wrapper prefix and assumed they had to dig into
+            // Xcode console — but the KMP println() goes to stderr
+            // which devicectl syslog can't capture (see
+            // mm-mobile-kmp-ios-bridge pitfall 4). We now lead with the
+            // exception class+message (e.g. "IllegalStateException:
+            // AppPathHolder not initialised") and append the bootstrap
+            // state as a short suffix for diagnostic context.
+            //
+            // We also NSLog the KMP detail so it lands in
+            // `xcrun devicectl device syslog` (which only captures
+            // NSLog/os_log, not Kotlin stderr). The same line is
+            // shown in the on-screen red error card so the user
+            // doesn't need the device console for the headline
+            // cause.
+            let kmpDetail: String = LibraryEntry.shared.lastError ?? "<no KMP detail captured>"
+            NSLog("MM_DEBUG init failure: %@", kmpDetail)
+            NSLog("MM_DEBUG init bootstrap: path=%@ isInit=%d",
+                  pathValue ?? "<nil>", pathIsInitialized ? 1 : 0)
+            Task { @MainActor in
+                if kmpDetail == "<no KMP detail captured>" {
+                    // No KMP detail means the exception happened BEFORE
+                    // the try-catch in makeOrNull (e.g. a SIGABRT
+                    // before LibraryEntry was even called). Fall back
+                    // to the bootstrap-state diagnostic.
+                    self.lastError = "Library init failed.\n\nPath=\(pathValue ?? "<nil>")\nisInit=\(pathIsInitialized)"
+                } else {
+                    self.lastError = "\(kmpDetail)\n\n— bootstrap state —\nPath=\(pathValue ?? "<nil>")\nisInit=\(pathIsInitialized)"
+                }
+            }
+            return
+        }
         syncTask = Task { [weak self] in
             let result: SyncState? = await withCheckedContinuation { cont in
-                graph.syncCoordinator.syncFull { state, error in
+                graph.syncCoordinator.syncFull { state, _ in
                     cont.resume(returning: state)
                 }
             }
@@ -201,6 +323,20 @@ final class AppCoordinator: ObservableObject {
                 self?.lastError = Self.errorMessage(for: result)
             }
         }
+    }
+
+    /// Public re-entry point for `rebuildLibraryGraph()`. The PairedScreen
+    /// "Reintentar" button calls this when the user has fixed
+    /// whatever was wrong (e.g. they updated the backend library path,
+    /// or they want to retry after a transient KMP failure). Clears the
+    /// previous `lastError` so the error card hides, then re-runs the
+    /// graph build. The new state (graph or nil) is re-published via
+    /// `libraryGraph = ...` which SwiftUI picks up via `@Published`.
+    func retryLibraryInit() {
+        Task { @MainActor in
+            self.lastError = nil
+        }
+        rebuildLibraryGraph()
     }
 
     private static func errorMessage(for state: SyncState?) -> String? {
@@ -432,10 +568,39 @@ final class AppCoordinator: ObservableObject {
                 }
             }
             phase = Self.phase(from: state)
+            // v2026-08-14 follow-up fix: when `restore()` transitions
+            // straight into `.paired` (cold launch with a valid token),
+            // the StateFlow is already at `.Paired` by the time
+            // `startObserving()` subscribes below. The observer's
+            // "entering .paired" branch therefore never fires
+            // (previousPhase == .paired already) and `libraryGraph`
+            // stays nil — the user lands on `PairedScreen` (which is
+            // only meant for the brief 1-frame gap between .paired
+            // and rebuildLibraryGraph) instead of `MainTabView`. We
+            // call `rebuildLibraryGraph()` explicitly here when the
+            // restored state is paired, so the cold-launch path goes
+            // through the same graph-build as a fresh pair.
+            if case .paired = phase {
+                rebuildLibraryGraph()
+            }
         } catch {
             // restore() failures are non-fatal — leave phase as Idle and let
             // the user try to pair again from the UI.
             lastError = "Restore failed: \(error.localizedDescription)"
+        }
+        // v2026-08-14 fix: attach the StateFlow observer AFTER restore has
+        // resolved. Previously startObserving() ran synchronously in init()
+        // and its first emission (Idle) raced the restore's Paired state.
+        // Now restore writes the state first, then we attach — so the first
+        // emission the SwiftUI body sees is the restored state, not Idle.
+        // The DEBUG-only MM_TEST_TOKEN bypass calls startObserving()
+        // explicitly after it writes the test token (see init), so this
+        // default path must not double-subscribe for that case.
+        let hasDebugTokenBypass = CommandLine.arguments.contains("-MM_TEST_TOKEN")
+        if hasDebugTokenBypass {
+            NSLog("MM_DEBUG_INIT restoreFromDisk deferring startObserving (DEBUG bypass handles it)")
+        } else {
+            startObserving()
         }
     }
 

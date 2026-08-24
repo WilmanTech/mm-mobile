@@ -55,13 +55,107 @@ struct PairedScreen: View {
     private var pairedPlaceholder: some View {
         ScrollView {
             VStack(spacing: 20) {
+                // Phase 3.D follow-up (2026-08-24): surface the
+                // library-init error inline. The previous form
+                // only set `coordinator.lastError` which is
+                // rendered by SettingsView — useless when the user
+                // is stuck on the post-pairing placeholder with
+                // no way to navigate elsewhere (the unpair button
+                // is up in the toolbar but easy to miss). The new
+                // inline error card makes the failure mode obvious
+                // and gives the user a one-tap retry path.
+                if let errorMessage = coordinator.lastError,
+                   !errorMessage.isEmpty {
+                    errorCard(message: errorMessage)
+                        .padding(.horizontal, 16)
+                }
+
                 connectedCard
                     .padding(.horizontal, 16)
                     .padding(.top, 24)
 
                 backendCard
                     .padding(.horizontal, 16)
+
+                retryCard
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
             }
+        }
+    }
+
+    /// Red error banner shown when the KMP data layer
+    /// (`LibraryEntry.makeOrNull`) returned nil.
+    ///
+    /// v2026-08-24 update: the message we receive from
+    /// `coordinator.lastError` is now the KMP-captured exception
+    /// class+message (e.g. "IllegalStateException: AppPathHolder
+    /// not initialised") followed by bootstrap-state diagnostic
+    /// lines — see `AppCoordinator.rebuildLibraryGraph()` for the
+    /// composition. The previous form led with a hardcoded
+    /// "Library init failed. Check the device console…" that
+    /// contradicted the actual diagnostic content the user was
+    /// looking at on-screen, and pushed the real exception below
+    /// the lineLimit(4) fold. We render the message as a
+    /// monospaced block with no line limit so the user can read
+    /// the full cause without leaving the app.
+    private func errorCard(message: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(Color.red)
+                    .font(.title2)
+                Text("Library init failed")
+                    .font(.headline)
+                    .foregroundStyle(Color.mmPrimaryText)
+                Spacer()
+            }
+
+            // Monospaced body so stack-trace-like lines align and
+            // exception class names stand out from the prose.
+            // Using a ScrollView inside the card so long messages
+            // (full Kotlin exception with stack frames) don't blow
+            // up the layout but are still readable by scrolling
+            // within the red banner.
+            ScrollView {
+                Text(message)
+                    .font(.system(.footnote, design: .monospaced))
+                    .foregroundStyle(Color.mmPrimaryText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+            .frame(maxHeight: 220)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.red.opacity(0.12))
+        .overlay(
+            RoundedRectangle(cornerRadius: MusicManagerTheme.cornerRadius)
+                .stroke(Color.red.opacity(0.6), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: MusicManagerTheme.cornerRadius))
+    }
+
+    /// "Reintentar" button — re-invokes `rebuildLibraryGraph()` to
+    /// re-attempt `LibraryEntry.makeOrNull`. Useful when the
+    /// underlying error is transient (e.g. AppPathHolder was a
+    /// race — though with the latest fix that should no longer
+    /// happen) or when the user has manually fixed whatever was
+    /// wrong (e.g. moved the music library path on the backend).
+    private var retryCard: some View {
+        Button {
+            coordinator.retryLibraryInit()
+        } label: {
+            HStack {
+                Image(systemName: "arrow.clockwise")
+                Text("Reintentar inicialización")
+                    .font(.subheadline.weight(.semibold))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .background(Color.mmAccentPrimary.opacity(0.18))
+            .foregroundStyle(Color.mmAccentPrimary)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
         }
     }
 

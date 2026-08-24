@@ -272,6 +272,7 @@ struct LibraryMockScreen: View {
                                 title: track.title,
                                 artistName: track.artistName,
                                 albumTitle: track.albumTitle,
+                                albumId: "",
                             ))
                         }
                         if idx < tracks.count - 1 {

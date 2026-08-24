@@ -47,7 +47,7 @@ data class Track(
     val discNumber: Int? = null,
     val trackNumber: Int? = null,
     val durationMs: Long? = null,
-    val bitrate: Int? = null,
+    val bitrate: Double? = null,
     val codec: String? = null,
     val acoustId: String? = null,
     val musicbrainzId: String? = null,

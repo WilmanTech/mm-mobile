@@ -24,6 +24,7 @@ import MusicManagerShared
 struct SearchView: View {
 
     let graph: LibraryEntry.Graph
+    @ObservedObject var player: AvPlayerEngine
 
     enum SubTab: String, CaseIterable, Identifiable {
         case tracks = "Pistas"
@@ -162,6 +163,7 @@ struct SearchView: View {
                 }
             }
             .padding(.bottom, 24)
+            .padding(.bottom, miniPlayerBottomPadding)
         }
     }
 
@@ -179,13 +181,23 @@ struct SearchView: View {
                 } else {
                     listContainer {
                         ForEach(Array(items.enumerated()), id: \.element.id) { idx, item in
-                            AlbumSearchRow(album: item)
+                            NavigationLink {
+                                AlbumDetailView(
+                                    graph: graph,
+                                    albumId: item.id,
+                                    player: player,
+                                )
+                            } label: {
+                                AlbumSearchRow(album: item)
+                            }
+                            .buttonStyle(.plain)
                             if idx < items.count - 1 { listDivider }
                         }
                     }
                 }
             }
             .padding(.bottom, 24)
+            .padding(.bottom, miniPlayerBottomPadding)
         }
     }
 
@@ -203,13 +215,23 @@ struct SearchView: View {
                 } else {
                     listContainer {
                         ForEach(Array(items.enumerated()), id: \.element.id) { idx, item in
-                            ArtistSearchRow(artist: item)
+                            NavigationLink {
+                                ArtistDetailView(
+                                    graph: graph,
+                                    artistId: item.id,
+                                    player: player,
+                                )
+                            } label: {
+                                ArtistSearchRow(artist: item)
+                            }
+                            .buttonStyle(.plain)
                             if idx < items.count - 1 { listDivider }
                         }
                     }
                 }
             }
             .padding(.bottom, 24)
+            .padding(.bottom, miniPlayerBottomPadding)
         }
     }
 
@@ -227,13 +249,34 @@ struct SearchView: View {
                 } else {
                     listContainer {
                         ForEach(Array(items.enumerated()), id: \.element.id) { idx, item in
-                            PlaylistSearchRow(playlist: item)
+                            NavigationLink {
+                                PlaylistDetailView(
+                                    graph: graph,
+                                    playlistId: item.id,
+                                    player: player,
+                                )
+                            } label: {
+                                PlaylistSearchRow(playlist: item)
+                            }
+                            .buttonStyle(.plain)
                             if idx < items.count - 1 { listDivider }
                         }
                     }
                 }
             }
             .padding(.bottom, 24)
+            .padding(.bottom, miniPlayerBottomPadding)
+        }
+    }
+
+    /// Bottom padding to reserve so the mini player overlay
+    /// doesn't hide the last row of any list inside the ScrollView.
+    /// Matches the same calculation in `LibraryScreen` and
+    /// `HomeView` so the three tabs stay visually aligned.
+    private var miniPlayerBottomPadding: CGFloat {
+        switch player.state {
+        case .idle, .error: return 0
+        case .loading, .playing, .paused: return 64 + 49
         }
     }
 

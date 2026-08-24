@@ -1,0 +1,18 @@
+-- MusicManager mobile schema (v2)
+--
+-- Adds `artist.cover_path` so the iOS / Android UI can render real
+-- artist artwork via `/api/library/covers/{path}` (the same endpoint
+-- the album rows already use). The backend's `ArtistDto.imagePath`
+-- maps directly into this column during the upsert.
+--
+-- v1's `artist.cover_url` was a placeholder for a future CDN-hosted
+-- URL; the v2 column stores the same path as `album.cover_path` so
+-- the cover loader works identically for both.
+--
+-- This file is detected automatically by SQLDelight as the v1 → v2
+-- migration. The iOS `NativeSqliteDriver` and Android driver both
+-- call `Schema.migrate(oldVersion = 1, newVersion = 2)` on launch
+-- when the on-device DB version is 1, so this ALTER TABLE runs once
+-- per upgrade — subsequent launches see version = 2 and skip it.
+
+ALTER TABLE artist ADD COLUMN cover_path TEXT;

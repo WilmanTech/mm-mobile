@@ -137,6 +137,37 @@ class MusicManagerApi(
     suspend fun whoami(): HttpResponse =
         client.get("$baseUrl/api/v1/whoami") { withBearer() }
 
+    /**
+     * Library-wide stats from `/api/library/stats`. Used by the iOS
+     * Home screen summary card. Backend returns the totals + a
+     * codec/quality breakdown. We don't currently render the
+     * breakdown but the data is here so future tiles can use it
+     * without re-shaping.
+     */
+    suspend fun libraryStats(): LibraryStatsDto =
+        client.get("$baseUrl/api/library/stats") {
+            withBearer()
+        }.body()
+
+    /**
+     * Recently-played tracks from `/api/library/recent/tracks`.
+     * The endpoint is ordered server-side by `last_played DESC` and
+     * typically capped at 20 rows — we don't re-sort in Kotlin to
+     * stay consistent with the desktop's "Recent" view.
+     */
+    suspend fun recentTracks(): List<RecentTrackDto> =
+        client.get("$baseUrl/api/library/recent/tracks") {
+            withBearer()
+        }.body()
+
+    /**
+     * Recently-played albums from `/api/library/recent/albums`.
+     */
+    suspend fun recentAlbums(): List<RecentAlbumDto> =
+        client.get("$baseUrl/api/library/recent/albums") {
+            withBearer()
+        }.body()
+
     private fun HttpRequestBuilder.withBearer() {
         authStorage?.loadToken()?.let { token -> bearerAuth(token) }
     }

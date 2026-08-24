@@ -14,8 +14,19 @@ settings:
     # still works but the glass modifiers would be unavailable at runtime.
     IPHONEOS_DEPLOYMENT_TARGET: "26.0"
     CODE_SIGN_STYLE: Automatic
-    CODE_SIGNING_REQUIRED: NO
-    CODE_SIGNING_ALLOWED: NO
+    # **Required for device installs**. With NO here, xcodegen writes
+    # CODE_SIGNING_ALLOWED=NO into the pbxproj and Xcode refuses to
+    # attach an Apple Development identity even with
+    # -allowProvisioningUpdates on the command line. The previous fix
+    # was to edit the pbxproj post-generation (commit b45b963), but
+    # any xcodegen regenerate wiped it out. Setting YES here keeps
+    # the change permanent.
+    CODE_SIGNING_REQUIRED: YES
+    CODE_SIGNING_ALLOWED: YES
+    # Personal Team used by `virtual.seizemoi@gmail.com`. Hardcoded
+    # so headless xcodebuild invocations always produce a signed
+    # .app without requiring Xcode GUI to first add the Apple ID.
+    DEVELOPMENT_TEAM: 4TPTVCCH6T
     ENABLE_USER_SCRIPT_SANDBOXING: NO
     GENERATE_INFOPLIST_FILE: YES
     MARKETING_VERSION: "0.1.0"
