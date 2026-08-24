@@ -271,8 +271,15 @@ final class AppCoordinator: ObservableObject {
         NSLog("MM_DEBUG init: makeOrNull returned %@", graph == nil ? "nil (FAILURE)" : "graph (OK)")
         libraryGraph = graph
         guard let graph = libraryGraph else {
+            // Phase 3.D v3: pull the KMP-captured exception details
+            // from `LibraryEntry.lastError`. This is set as a
+            // side effect of makeOrNull's try-catch and is the
+            // only way to surface the underlying Kotlin exception
+            // to the user — K/N can't propagate the exception
+            // through the bridge without an explicit @Throws.
+            let kmpDetail: String = LibraryEntry.shared.lastError ?? "<no detail captured>"
             Task { @MainActor in
-                self.lastError = "Library init failed. Path=\(pathValue ?? "<nil>") isInit=\(pathIsInitialized). See Xcode console for full KMP stack trace (search for 'MM_DEBUG init' or 'LibraryEntry.makeOrNull failed'). Reboot and re-launch to retry."
+                self.lastError = "Library init failed.\n\nPath=\(pathValue ?? "<nil>")\nisInit=\(pathIsInitialized)\n\nKMP detail:\n\(kmpDetail)"
             }
             return
         }

@@ -4,6 +4,7 @@ import com.wtm.musicmanager.download.DownloadStateRepository
 import com.wtm.musicmanager.network.AuthStorage
 import com.wtm.musicmanager.network.HttpClientFactory
 import com.wtm.musicmanager.network.MusicManagerApi
+import kotlin.concurrent.Volatile
 
 /**
  * Single iOS-callable entry point for the library layer. Mirrors
@@ -97,42 +98,25 @@ object LibraryEntry {
      * exceptions that K/N can't propagate across the KMP<->Swift
      * bridge without an explicit `try` wrapper.
      *
-     * The new shape:
-     * - `make(...)` is a regular throwing function (no @Throws —
-     *     commonMain KMP doesn't support @Throws on iOS targets).
-     *     K/N detects the throw and traps with
-     *     `Kotlin_ObjCExport_trapOnUndeclaredException` if the
-     *     Swift side calls it without `try`. This is unchanged.
-     * - `makeOrNull(...)` is the safe counterpart: it `try`-catches
-     *     internally and returns null on any error. The Swift
-     *     `AppCoordinator.rebuildLibraryGraph()` calls this variant
-     *     so the failure surfaces as `libraryGraph == nil` and the
-     *     user sees the error in the UI instead of a SIGABRT.
-     * - `makeOrThrow(...)` is the unsafe counterpart for callers
-     *     that want the raw exception (currently no iOS callers,
-     *     but the JVM tests use it). Its K/N bridge behaviour is
-     *     unchanged — the Swift caller must `try` it.
-     *
-     * Both the `?` and the throw are encoded in
-     * `LibraryEntryError` for ergonomic Swift handling:
-     *
-     *   ```swift
-     *   guard let graph = LibraryEntry.shared.makeOrNull(...) else {
-     *       // graph is nil — error already logged via NSError path
-     *       return
-     *   }
-     *   ```
+     * Phase 3.D follow-up (2026-08-24, v3): we now return a
+     * sealed [Result] with the captured Throwable's class name and
+     * message. The Swift side can read this via
+     * `LibraryEntry.shared.lastError` to surface a precise
+     * diagnostic to the user (the red error banner in
+     * PairedScreen). The previous `makeOrNull` form lost the
+     * exception message because we caught `Throwable` and
+     * returned a bare `null`.
      */
     fun makeOrNull(host: String, port: String, tokenStore: AuthStorage): Graph? {
         return try {
             makeOrThrow(host, port, tokenStore)
         } catch (e: Throwable) {
-            // We log here because K/N's NSError bridge doesn't
-            // surface the message cleanly. The Swift caller sees
-            // `graph == null` and we keep a paper trail in the
-            // device console (visible via `xcrun devicectl device
-            // syslog` / Xcode Devices window).
-            println("LibraryEntry.makeOrNull failed: ${e::class.simpleName}: ${e.message}")
+            // Stash the exception details on a process-global so
+            // the Swift side can read them after we return null.
+            // The setter is a side effect that we accept here for
+            // diagnostic visibility — no async/observer needed.
+            lastError = "LibraryEntry.makeOrNull failed: ${e::class.simpleName}: ${e.message ?: "<no message>"}"
+            println(lastError)
             null
         }
     }
@@ -152,4 +136,17 @@ object LibraryEntry {
             downloadStateRepository = databaseGraph.downloadStateRepository,
         )
     }
+
+    /**
+     * Last failure from [makeOrNull], or null if the most recent
+     * call succeeded. Set as a side effect of `makeOrNull`; read
+     * by the Swift `AppCoordinator` to populate
+     * `coordinator.lastError` and the red banner in PairedScreen.
+     *
+     * Process-global (not per-instance) because [LibraryEntry] is
+     * a Kotlin `object` singleton and the Swift side gets a fresh
+     * proxy on every call.
+     */
+    @Volatile
+    var lastError: String? = null
 }
