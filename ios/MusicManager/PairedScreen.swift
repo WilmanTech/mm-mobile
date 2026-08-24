@@ -85,10 +85,20 @@ struct PairedScreen: View {
     }
 
     /// Red error banner shown when the KMP data layer
-    /// (`LibraryEntry.makeOrNull`) returned nil. The full technical
-    /// detail also lives in the device console (Xcode → Window →
-    /// Devices → iPhone 11 → Open Console) under the
-    /// "LibraryEntry.makeOrNull failed: …" prefix.
+    /// (`LibraryEntry.makeOrNull`) returned nil.
+    ///
+    /// v2026-08-24 update: the message we receive from
+    /// `coordinator.lastError` is now the KMP-captured exception
+    /// class+message (e.g. "IllegalStateException: AppPathHolder
+    /// not initialised") followed by bootstrap-state diagnostic
+    /// lines — see `AppCoordinator.rebuildLibraryGraph()` for the
+    /// composition. The previous form led with a hardcoded
+    /// "Library init failed. Check the device console…" that
+    /// contradicted the actual diagnostic content the user was
+    /// looking at on-screen, and pushed the real exception below
+    /// the lineLimit(4) fold. We render the message as a
+    /// monospaced block with no line limit so the user can read
+    /// the full cause without leaving the app.
     private func errorCard(message: String) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
@@ -101,15 +111,20 @@ struct PairedScreen: View {
                 Spacer()
             }
 
-            Text(message)
-                .font(.footnote)
-                .foregroundStyle(Color.mmSecondaryText)
-                .lineLimit(4)
-
-            Text("Check the device console (Xcode → Devices → iPhone 11 → Open Console) for the underlying Kotlin exception. The KMP log line starts with 'LibraryEntry.makeOrNull failed:'.")
-                .font(.caption2)
-                .foregroundStyle(Color.mmTextDisabled)
-                .lineLimit(4)
+            // Monospaced body so stack-trace-like lines align and
+            // exception class names stand out from the prose.
+            // Using a ScrollView inside the card so long messages
+            // (full Kotlin exception with stack frames) don't blow
+            // up the layout but are still readable by scrolling
+            // within the red banner.
+            ScrollView {
+                Text(message)
+                    .font(.system(.footnote, design: .monospaced))
+                    .foregroundStyle(Color.mmPrimaryText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+            .frame(maxHeight: 220)
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)

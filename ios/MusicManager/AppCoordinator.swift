@@ -277,9 +277,39 @@ final class AppCoordinator: ObservableObject {
             // only way to surface the underlying Kotlin exception
             // to the user — K/N can't propagate the exception
             // through the bridge without an explicit @Throws.
-            let kmpDetail: String = LibraryEntry.shared.lastError ?? "<no detail captured>"
+            //
+            // v2026-08-24 follow-up: the KMP detail IS the user-facing
+            // message. The previous wrapper ("Library init failed. /
+            // Path=… / KMP detail: …") pushed the exception below the
+            // fold of `Text(message).lineLimit(4)` so the user only
+            // saw the wrapper prefix and assumed they had to dig into
+            // Xcode console — but the KMP println() goes to stderr
+            // which devicectl syslog can't capture (see
+            // mm-mobile-kmp-ios-bridge pitfall 4). We now lead with the
+            // exception class+message (e.g. "IllegalStateException:
+            // AppPathHolder not initialised") and append the bootstrap
+            // state as a short suffix for diagnostic context.
+            //
+            // We also NSLog the KMP detail so it lands in
+            // `xcrun devicectl device syslog` (which only captures
+            // NSLog/os_log, not Kotlin stderr). The same line is
+            // shown in the on-screen red error card so the user
+            // doesn't need the device console for the headline
+            // cause.
+            let kmpDetail: String = LibraryEntry.shared.lastError ?? "<no KMP detail captured>"
+            NSLog("MM_DEBUG init failure: %@", kmpDetail)
+            NSLog("MM_DEBUG init bootstrap: path=%@ isInit=%d",
+                  pathValue ?? "<nil>", pathIsInitialized ? 1 : 0)
             Task { @MainActor in
-                self.lastError = "Library init failed.\n\nPath=\(pathValue ?? "<nil>")\nisInit=\(pathIsInitialized)\n\nKMP detail:\n\(kmpDetail)"
+                if kmpDetail == "<no KMP detail captured>" {
+                    // No KMP detail means the exception happened BEFORE
+                    // the try-catch in makeOrNull (e.g. a SIGABRT
+                    // before LibraryEntry was even called). Fall back
+                    // to the bootstrap-state diagnostic.
+                    self.lastError = "Library init failed.\n\nPath=\(pathValue ?? "<nil>")\nisInit=\(pathIsInitialized)"
+                } else {
+                    self.lastError = "\(kmpDetail)\n\n— bootstrap state —\nPath=\(pathValue ?? "<nil>")\nisInit=\(pathIsInitialized)"
+                }
             }
             return
         }
