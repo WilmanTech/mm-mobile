@@ -145,15 +145,6 @@ open class SyncCoordinator(
                 upsertQueries.upsertPlaylistTrack(dto.toDomain(), syncedAt)
             }
         }
-        // v2026-08-24 diagnostic: print row counts after the
-        // transaction commits so we can see whether the upsert
-        // actually wrote anything. KMP println goes to stderr,
-        // which `xcrun devicectl` does NOT capture — but Xcode
-        // Console (Xcode → Window → Devices and Simulators → iPhone
-        // → Open Console) does. Without these, "biblioteca vacía"
-        // is impossible to attribute to "sync wrote nothing" vs.
-        // "sync wrote but Flow isn't refreshing".
-        println("SYNC_DIAG applyFull: artists=${response.artists.size} albums=${response.albums.size} tracks=${response.tracks.size} playlists=${response.playlists.size} playlistTracks=${response.playlistTracks.size}")
     }
 
     private fun applyChanges(response: SyncResponse) {

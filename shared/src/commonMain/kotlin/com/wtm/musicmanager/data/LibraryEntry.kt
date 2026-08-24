@@ -1,6 +1,5 @@
 package com.wtm.musicmanager.data
 
-import com.wtm.musicmanager.db.MusicManagerDatabase
 import com.wtm.musicmanager.download.DownloadStateRepository
 import com.wtm.musicmanager.network.AuthStorage
 import com.wtm.musicmanager.network.HttpClientFactory
@@ -86,13 +85,6 @@ object LibraryEntry {
         // production download worker (Phase 5 / BGTaskScheduler)
         // will be the real caller of those mutators.
         val downloadStateRepository: DownloadStateRepository,
-        // v2026-08-24 diagnostic: expose the underlying database
-        // so Swift can run a raw SELECT COUNT(*) on each table
-        // after syncFull returns. This is the definitive way to
-        // distinguish "sync wrote 0 rows" from "sync wrote rows
-        // but the UI Flow isn't refreshing". Marked internal-
-        // diagnostic — remove once biblioteca vacía is closed.
-        val databaseForDiagnostic: MusicManagerDatabase,
     )
 
     /**
@@ -142,7 +134,6 @@ object LibraryEntry {
             baseHost = host,
             basePort = port,
             downloadStateRepository = databaseGraph.downloadStateRepository,
-            databaseForDiagnostic = databaseGraph.database,
         )
     }
 
