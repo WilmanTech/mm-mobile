@@ -30,6 +30,7 @@ class SqlDelightLibraryRepositoryTest {
                 album_count INTEGER NOT NULL DEFAULT 0,
                 track_count INTEGER NOT NULL DEFAULT 0,
                 cover_url TEXT,
+                cover_path TEXT,
                 synced_at INTEGER NOT NULL
             )
             """.trimIndent(),
@@ -111,7 +112,7 @@ class SqlDelightLibraryRepositoryTest {
     ) {
         db.queriesQueries.upsertArtist(
             id = artistId, name = artistName,
-            album_count = 1L, track_count = 1L, cover_url = null, synced_at = 1L,
+            album_count = 1L, track_count = 1L, cover_url = null, cover_path = null, synced_at = 1L,
         )
         db.queriesQueries.upsertAlbum(
             id = albumId, title = albumTitle,
@@ -212,11 +213,11 @@ class SqlDelightLibraryRepositoryTest {
     fun `observeArtists returns inserted artists ordered by name (NOCASE)`() = runTest {
         db.queriesQueries.upsertArtist(
             id = 1, name = "Zeppelin",
-            album_count = 0L, track_count = 0L, cover_url = null, synced_at = 1L,
+            album_count = 0L, track_count = 0L, cover_url = null, cover_path = null, synced_at = 1L,
         )
         db.queriesQueries.upsertArtist(
             id = 2, name = "abba",
-            album_count = 0L, track_count = 0L, cover_url = null, synced_at = 1L,
+            album_count = 0L, track_count = 0L, cover_url = null, cover_path = null, synced_at = 1L,
         )
 
         repository.observeArtists().test {
@@ -309,11 +310,11 @@ class SqlDelightLibraryRepositoryTest {
     fun `searchArtists returns all artists when query is empty`() = runTest {
         db.queriesQueries.upsertArtist(
             id = 1, name = "Queen",
-            album_count = 1L, track_count = 1L, cover_url = null, synced_at = 1L,
+            album_count = 1L, track_count = 1L, cover_url = null, cover_path = null, synced_at = 1L,
         )
         db.queriesQueries.upsertArtist(
             id = 2, name = "Led Zeppelin",
-            album_count = 1L, track_count = 1L, cover_url = null, synced_at = 1L,
+            album_count = 1L, track_count = 1L, cover_url = null, cover_path = null, synced_at = 1L,
         )
 
         repository.searchArtists("").test {
@@ -327,11 +328,11 @@ class SqlDelightLibraryRepositoryTest {
     fun `searchArtists filters by name substring (case insensitive)`() = runTest {
         db.queriesQueries.upsertArtist(
             id = 1, name = "Queen",
-            album_count = 1L, track_count = 1L, cover_url = null, synced_at = 1L,
+            album_count = 1L, track_count = 1L, cover_url = null, cover_path = null, synced_at = 1L,
         )
         db.queriesQueries.upsertArtist(
             id = 2, name = "Led Zeppelin",
-            album_count = 1L, track_count = 1L, cover_url = null, synced_at = 1L,
+            album_count = 1L, track_count = 1L, cover_url = null, cover_path = null, synced_at = 1L,
         )
 
         repository.searchArtists("qu").test {
