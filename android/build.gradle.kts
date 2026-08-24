@@ -83,6 +83,19 @@ dependencies {
     implementation(libs.compose.material.icons)
     debugImplementation(libs.compose.ui.tooling)
 
+    // Networking — explicit so Hilt's KSP processor can resolve HttpClient
+    // types declared in the module's own DI graph (transitive deps don't
+    // always make it into the KSP classpath).
+    implementation(libs.ktor.client.core)
+    implementation(libs.ktor.client.okhttp)
+    implementation(libs.ktor.client.content.negotiation)
+    implementation(libs.ktor.serialization.kotlinx.json)
+    implementation(libs.ktor.client.auth)
+    implementation(libs.ktor.client.logging)
+    implementation(libs.kotlinx.datetime)
+    implementation(libs.kotlinx.serialization.json)
+    implementation(libs.sqldelight.android.driver)
+
     // Media
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.ui)
@@ -96,6 +109,7 @@ dependencies {
     ksp(libs.hilt.compiler)
     implementation(libs.hilt.work)
     ksp(libs.hilt.work.compiler)
+    implementation(libs.hilt.navigation.compose)
 
     // Image loading
     implementation(libs.coil.compose)
@@ -109,5 +123,8 @@ dependencies {
 
     // Test
     testImplementation(libs.junit)
+    testImplementation("org.jetbrains.kotlin:kotlin-test")
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.turbine)
     androidTestImplementation(platform(libs.compose.bom))
 }

@@ -60,6 +60,13 @@ jobs:
 
       - name: Build KMP framework for iOS
         # Pod install is deferred until the iOS Xcode project exists.
-        run: ./gradlew :shared:linkDebugFrameworkIosX64 :shared:linkDebugFrameworkIosArm64
+        # NOTE: linkDebugFrameworkIosX64 / linkDebugFrameworkIosArm64 were
+        # removed in KMP 2.0 — the new plugin uses the target-prefixed
+        # `iosX64Binaries` / `iosArm64Binaries` tasks instead, which
+        # produce the same .framework outputs (under
+        # shared/build/bin/iosX64/debugFramework/ etc.). Verified on
+        # mm-mobile 2026-08-10 (the prior task names returned
+        # "'linkDebugFrameworkIosX64' not found" in CI).
+        run: ./gradlew :shared:iosX64Binaries :shared:iosArm64Binaries
 
       # iOS Xcode build will be enabled once ios/mm-mobile.xcodeproj is created.

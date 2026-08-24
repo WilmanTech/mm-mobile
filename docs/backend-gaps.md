@@ -22,32 +22,20 @@ MusicManager (`WilmanTech/MusicManager`).
 
 | Endpoint | Estado |
 |---|---|
-| `GET /api/v1/sync/full` | ✅ **implementado** (PR contra develop pendiente) |
-| `GET /api/v1/sync/changes?since=<iso8601>` | ✅ **implementado** |
+| `GET /api/v1/sync/changes?since=<epoch_ms>` | Deltas incrementales de catálogo |
+| `GET /api/v1/sync/full` | Snapshot completo (bootstrap inicial) |
 
-Ambos retornan el mismo envelope:
+**Estado Phase 1.1** (entregado `develop` de MusicManager backend, ver
+`WilmanTech/MusicManager@feature/mobile-sync-api`):
 
-```json
-{
-  "server_time": "2026-08-09T12:00:00Z",
-  "artists":     [{ "id", "name", "musicbrainz_id", "image_path",
-                     "created_at", "updated_at" }],
-  "albums":      [{ "id", "title", "artist_id", "year", "genre",
-                     "cover_path", "musicbrainz_id", "folder_path",
-                     "created_at", "updated_at" }],
-  "tracks":      [{ "id", "title", "album_id", "artist_id",
-                     "disc_number", "track_number", "duration_ms",
-                     "bitrate", "codec", "file_path", "file_hash",
-                     "acoustid", "musicbrainz_id", "play_count",
-                     "last_played", "created_at" (== added_at, aliased),
-                     "is_favorite", "is_cover", "is_live",
-                     "updated_at" }],
-  "playlists":   [{ "id", "name", "description", "is_smart", "rules",
-                     "m3u_path", "is_m3u_imported",
-                     "created_at", "updated_at" }],
-  "playlist_tracks": [{ "playlist_id", "track_id", "position", "added_at" }]
-}
-```
+- ✅ `GET /api/v1/sync/full` — retorna todos los artistas/albums/tracks/playlists
+- ✅ `GET /api/v1/sync/changes?since=<epoch_ms>` — filtra por `updated_at`
+- ✅ Header `X-Since` con timestamp epoch_ms (no ISO8601 — corregido)
+- ✅ Response shape con `server_time`, `has_more`, todas las 5 listas
+
+**Tests cliente** (`mm-mobile/shared/src/jvmTest`): SyncCoordinatorTest
+verifica que el cliente envía el header correcto y persiste `serverTime`
+para el siguiente delta.
 
 `updated_at` lo mantiene un par de triggers `AFTER INSERT/UPDATE`
 (instalados idempotentemente en `database.py:_add_updated_at`). El

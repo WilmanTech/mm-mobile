@@ -1,0 +1,72 @@
+name: MusicManager
+options:
+  bundleIdPrefix: com.wtm.musicmanager
+  deploymentTarget:
+    iOS: "26.0"
+  developmentLanguage: en
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.10"
+    # Required for .glassEffect / .glassButtonStyle — these APIs were
+    # introduced in iOS 26. Building against an older deployment target
+    # still works but the glass modifiers would be unavailable at runtime.
+    IPHONEOS_DEPLOYMENT_TARGET: "26.0"
+    CODE_SIGN_STYLE: Automatic
+    # **Required for device installs**. With NO here, xcodegen writes
+    # CODE_SIGNING_ALLOWED=NO into the pbxproj and Xcode refuses to
+    # attach an Apple Development identity even with
+    # -allowProvisioningUpdates on the command line. The previous fix
+    # was to edit the pbxproj post-generation (commit b45b963), but
+    # any xcodegen regenerate wiped it out. Setting YES here keeps
+    # the change permanent.
+    CODE_SIGNING_REQUIRED: YES
+    CODE_SIGNING_ALLOWED: YES
+    # Personal Team used by `virtual.seizemoi@gmail.com`. Hardcoded
+    # so headless xcodebuild invocations always produce a signed
+    # .app without requiring Xcode GUI to first add the Apple ID.
+    DEVELOPMENT_TEAM: 4TPTVCCH6T
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    GENERATE_INFOPLIST_FILE: YES
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+
+targets:
+  MusicManager:
+    type: application
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: MusicManager
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.wtm.musicmanager.MusicManager
+        # Use a real Info.plist instead of GENERATE_INFOPLIST_FILE so we
+        # can declare `CFBundleURLTypes` for the `mm://pair` deep-link.
+        # Without this, `xcrun simctl openurl booted mm://...` returns
+        # LSApplicationWorkspaceErrorDomain error 115 because the OS
+        # doesn't know which scheme belongs to our bundle.
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: MusicManager/Info.plist
+        TARGETED_DEVICE_FAMILY: "1,2"
+    dependencies:
+      - sdk: Foundation.framework
+      - sdk: SwiftUI.framework
+      - sdk: UIKit.framework
+
+schemes:
+  MusicManager:
+    build:
+      targets:
+        MusicManager: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release

@@ -1,0 +1,142 @@
+-- Sync queries (Phase 1.1)
+-- Upserts by PK; deletes based on server `removed` payload (NOT YET — to be added
+-- when backend supports tombstones in /api/v1/sync/changes).
+
+upsertArtist:
+INSERT OR REPLACE INTO artist(id, name, album_count, track_count, cover_url, cover_path, synced_at)
+VALUES (?, ?, ?, ?, ?, ?, ?);
+
+-- Phase 3.D (smoke follow-up 2026-08-23): used by
+-- SqlDelightSyncUpsertQueries.upsertAlbum to denormalize the
+-- artist_name at sync time. Without this, the AlbumsListView /
+-- AlbumDetailView would render an empty artist name because the
+-- schema's `album.artist_name` column is only populated by the
+-- sync upsert path (the network AlbumDto doesn't carry the name
+-- — only artist_id). Using `name` (not `name COLLATE NOCASE`)
+-- because the value is round-tripped for display, not searched.
+selectArtistNameById:
+SELECT name FROM artist WHERE id = ?;
+
+-- Phase 3.D (smoke follow-up 2026-08-23): same denormalization for
+-- the track's album_title field. TrackDto carries album_id only;
+-- the resolver in upsertTrack() looks the title up from the local
+-- album cache (albums are upserted between artists and tracks in
+-- SyncCoordinator, so this hits a row).
+selectAlbumTitleById:
+SELECT title FROM album WHERE id = ?;
+
+upsertAlbum:
+INSERT OR REPLACE INTO album(id, title, artist_id, artist_name, year, track_count, duration_ms, cover_url, cover_path, is_downloaded, synced_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+upsertTrack:
+INSERT OR REPLACE INTO track(id, title, album_id, album_title, artist_id, artist_name, duration_ms, track_number, bitrate, codec, stream_url, local_path, download_state, synced_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+upsertPlaylist:
+INSERT OR REPLACE INTO playlist(id, name, description, track_count, cover_url, is_smart, is_m3u_imported, updated_at, synced_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+upsertPlaylistTrack:
+INSERT OR REPLACE INTO playlist_track(playlist_id, track_id, position, added_at)
+VALUES (?, ?, ?, ?);
+
+updateTrackDownload:
+UPDATE track
+SET local_path = ?, download_state = ?
+WHERE id = ?;
+
+selectTracksByDownloadState:
+SELECT * FROM track WHERE download_state = ?;
+
+-- Phase 3.D: lightweight projection for the iOS SettingsView
+-- "Descargas" section. Returns only `(id, download_state, local_path)`
+-- so the Swift-side `Map<Long, DownloadInfo>` doesn't have to
+-- deserialize full Track rows on every emission. `track` is small
+-- enough that a full-row projection would also work, but this keeps
+-- the per-track memory footprint minimal in case the library grows
+-- to 10k+ tracks.
+selectAllTrackDownloadStates:
+SELECT id, download_state, local_path FROM track;
+
+selectAllArtists:
+SELECT * FROM artist ORDER BY name COLLATE NOCASE;
+
+selectAlbumsByArtist:
+SELECT * FROM album WHERE artist_id = ? ORDER BY year DESC, title COLLATE NOCASE;
+
+selectTracksByAlbum:
+SELECT * FROM track WHERE album_id = ? ORDER BY track_number ASC, title COLLATE NOCASE;
+
+selectAllPlaylists:
+SELECT * FROM playlist ORDER BY name COLLATE NOCASE;
+
+selectTracksByPlaylist:
+SELECT t.* FROM track t
+INNER JOIN playlist_track pt ON pt.track_id = t.id
+WHERE pt.playlist_id = ?
+ORDER BY pt.position ASC;
+
+-- Phase 2: track-level queries for LibraryScreen
+selectAllTracks:
+SELECT * FROM track ORDER BY title COLLATE NOCASE;
+
+selectTracksByArtist:
+SELECT * FROM track WHERE artist_id = ? ORDER BY album_id, track_number, title COLLATE NOCASE;
+
+searchTracks:
+SELECT * FROM track
+WHERE title LIKE ? OR album_title LIKE ? OR artist_name LIKE ?
+ORDER BY title COLLATE NOCASE;
+
+selectTrackCount:
+SELECT COUNT(*) FROM track;
+
+selectArtistById:
+SELECT * FROM artist WHERE id = ?;
+
+selectAlbumById:
+SELECT * FROM album WHERE id = ?;
+
+selectPlaylistById:
+SELECT * FROM playlist WHERE id = ?;
+
+-- Phase 2.1: SearchScreen tab queries
+-- Read-side, reactive. All four tabs (Tracks / Albums / Artists / Playlists)
+-- back onto the same `query` so the ViewModel can use a single debounce.
+-- selectAllPlaylists is already defined above (line 34 in the
+-- pre-Phase-2.1 file); we add the missing selectAllAlbums + the three
+-- LIKE-filtered search variants.
+
+selectAllAlbums:
+SELECT * FROM album ORDER BY title COLLATE NOCASE;
+
+searchAlbums:
+SELECT * FROM album
+WHERE title LIKE ? OR artist_name LIKE ?
+ORDER BY title COLLATE NOCASE;
+
+searchPlaylists:
+SELECT * FROM playlist
+WHERE name LIKE ? OR description LIKE ?
+ORDER BY name COLLATE NOCASE;
+
+searchArtists:
+SELECT * FROM artist
+WHERE name LIKE ?
+ORDER BY name COLLATE NOCASE;
+
+deleteAllArtists:
+DELETE FROM artist;
+
+deleteAllAlbums:
+DELETE FROM album;
+
+deleteAllTracks:
+DELETE FROM track;
+
+deleteAllPlaylists:
+DELETE FROM playlist;
+
+deleteAllPlaylistTracks:
+DELETE FROM playlist_track;

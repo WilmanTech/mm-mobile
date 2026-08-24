@@ -5,6 +5,7 @@ plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.sqldelight)
+    alias(libs.plugins.kotlinCocoapods)
 }
 
 android {
@@ -21,6 +22,14 @@ android {
 
 kotlin {
     jvmToolchain(21)
+
+    // `-Xexpect-actual-classes` opts the compiler into the stabilized
+    // expect/actual classes/objects behaviour (Kotlin 2.0+). Without
+    // this flag Kotlin emits a "Beta" warning that the CI logs treat as
+    // non-fatal but is noisy and will break at -Werror.
+    compilerOptions {
+        freeCompilerArgs.add("-Xexpect-actual-classes")
+    }
 
     androidTarget {
         compilations.all {
@@ -45,6 +54,22 @@ kotlin {
     // For Fase 0 we use `linkDebugFrameworkIosX64` to produce the .framework
     // and consume it from a plain Xcode project (manual setup).
 
+    cocoapods {
+        summary = "Shared Kotlin module for MusicManager iOS app"
+        homepage = "https://github.com/WilmanTech/mm-mobile"
+        ios.deploymentTarget = "26.0"
+        framework {
+            // Module name exposed to Swift as `import MusicManagerShared`.
+            baseName = "MusicManagerShared"
+            isStatic = false
+        }
+        // The :shared:podInstall task wires this Gradle module into the
+        // iOS Xcode project via CocoaPods. Run with:
+        //   ./gradlew :shared:podInstall
+        // from the repo root after the first build to generate the podspec
+        // and execute `pod install` inside ios/.
+    }
+
     sourceSets {
         commonMain.dependencies {
             implementation(libs.kotlinx.coroutines.core)
@@ -65,15 +90,39 @@ kotlin {
         commonTest.dependencies {
             implementation(kotlin("test"))
             implementation(libs.kotlinx.coroutines.test)
-            implementation(libs.kotest.runner)
+            // kotest-assertions and kotest-property are multiplatform
+            // (KMP-published artifacts), so they live in commonTest
+            // and any commonTest file (e.g. ConnectivityTest.kt) can
+            // use shouldBe / forAll / etc.
             implementation(libs.kotest.assertions)
             implementation(libs.kotest.property)
             implementation(libs.turbine)
+            implementation(libs.ktor.client.mock)
+        }
+
+        // The JDBC sqlite-driver declares org.jetbrains.kotlin.platform.type=jvm,
+        // which would cause "platform.type 'jvm' vs 'native' mismatch" on iOS
+        // test variants if added to commonTest. We restrict it to jvmTest,
+        // where SyncCoordinatorTest.kt lives — that's the only place that
+        // exercises the SQLDelight JDBC driver against an in-memory DB.
+        //
+        // kotest-runner-junit5 is also JVM-only (it integrates with the
+        // JUnit 5 platform; no native equivalent). The iOS native test
+        // targets cannot resolve it, so it lives here too. The runner
+        // is only needed by tests that extend FunSpec / StringSpec /
+        // etc. and let Kotest discover them via JUnit 5; commonTest
+        // doesn't need it (Kotlin's kotlin(\"test\") handles the
+        // @Test discovery in KMP common tests).
+        jvmTest.dependencies {
+            implementation(libs.sqlite.jdbc)
+            implementation(libs.sqldelight.sqlite.driver)
+            implementation(libs.kotest.runner)
         }
 
         androidMain.dependencies {
             implementation(libs.ktor.client.okhttp)
             implementation(libs.sqldelight.android.driver)
+            implementation(libs.androidx.security.crypto)
         }
 
         iosMain.dependencies {
@@ -82,8 +131,14 @@ kotlin {
         }
 
         jvmMain.dependencies {
-            // JVM target is test-only; use OkHttp engine for parity with Android.
-            implementation(libs.ktor.client.okhttp)
+            // JVM target is test-only; use CIO engine (pure-Kotlin) so
+            // :shared:jvmTest doesn't pull in OkHttp's android.test artifacts.
+            implementation(libs.ktor.client.cio)
+
+            // Phase 4.A.4: jvmTest creates its own JdbcSqliteDriver for
+            // SyncCoordinatorTest. The shared DatabaseFactory.jvm actual
+            // also opens one (in-memory) when called.
+            implementation(libs.sqldelight.jdbc.driver)
         }
     }
 }

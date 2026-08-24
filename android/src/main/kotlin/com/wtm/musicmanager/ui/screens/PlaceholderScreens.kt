@@ -1,39 +1,7 @@
 package com.wtm.musicmanager.ui.screens
 
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-
-@Composable
-fun SearchScreen() {
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text("Buscar", style = MaterialTheme.typography.titleLarge)
-    }
-}
-
-@Composable
-fun LibraryScreen() {
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text("Biblioteca", style = MaterialTheme.typography.titleLarge)
-    }
-}
-
-@Composable
-fun SettingsScreen() {
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text("Ajustes", style = MaterialTheme.typography.titleLarge)
-    }
-}
-
-@Composable
-fun PairingScreen() {
-    // Full-screen overlay shown when no server is paired. Wires up in feature/pairing.
-    // For Fase 0 we render a no-op placeholder.
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text("", style = MaterialTheme.typography.titleLarge)
-    }
-}
+// Phase 2.1: SearchScreen used to live here as a placeholder. Phase 3
+// moved SettingsScreen to its own package. This file now contains no
+// placeholders — both Search and Settings are real screens wired into
+// MusicManagerRoot. Future placeholders (no current plans) would go
+// here.

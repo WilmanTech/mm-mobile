@@ -1,0 +1,73 @@
+-- MusicManager mobile cache schema (Phase 1.1)
+-- All tables track updated_at for incremental sync (WHERE updated_at > ?).
+
+CREATE TABLE artist (
+    id INTEGER NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    album_count INTEGER NOT NULL DEFAULT 0,
+    track_count INTEGER NOT NULL DEFAULT 0,
+    cover_url TEXT,
+    -- Phase 3.B+ (2026-08-14): mirrors `ArtistDto.imagePath` from the
+    -- backend so the mobile client can render real artist artwork
+    -- via `/api/library/covers/{path}`. Mirrors `album.cover_path`.
+    cover_path TEXT,
+    synced_at INTEGER NOT NULL
+);
+
+CREATE TABLE album (
+    id INTEGER NOT NULL PRIMARY KEY,
+    title TEXT NOT NULL,
+    artist_id INTEGER NOT NULL,
+    artist_name TEXT NOT NULL,
+    year INTEGER,
+    track_count INTEGER NOT NULL DEFAULT 0,
+    duration_ms INTEGER,
+    cover_url TEXT,
+    cover_path TEXT,
+    is_downloaded INTEGER NOT NULL DEFAULT 0,
+    synced_at INTEGER NOT NULL
+);
+
+CREATE INDEX idx_album_artist ON album(artist_id);
+
+CREATE TABLE track (
+    id INTEGER NOT NULL PRIMARY KEY,
+    title TEXT NOT NULL,
+    album_id INTEGER NOT NULL,
+    album_title TEXT NOT NULL,
+    artist_id INTEGER NOT NULL,
+    artist_name TEXT NOT NULL,
+    duration_ms INTEGER NOT NULL,
+    track_number INTEGER,
+    bitrate INTEGER,
+    codec TEXT,
+    stream_url TEXT,
+    local_path TEXT,
+    download_state TEXT NOT NULL DEFAULT 'NotDownloaded',
+    synced_at INTEGER NOT NULL
+);
+
+CREATE INDEX idx_track_album ON track(album_id);
+CREATE INDEX idx_track_artist ON track(artist_id);
+
+CREATE TABLE playlist (
+    id INTEGER NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    track_count INTEGER NOT NULL DEFAULT 0,
+    cover_url TEXT,
+    is_smart INTEGER NOT NULL DEFAULT 0,
+    is_m3u_imported INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER,
+    synced_at INTEGER NOT NULL
+);
+
+CREATE TABLE playlist_track (
+    playlist_id INTEGER NOT NULL,
+    track_id INTEGER NOT NULL,
+    position INTEGER NOT NULL,
+    added_at INTEGER NOT NULL,
+    PRIMARY KEY (playlist_id, track_id)
+);
+
+CREATE INDEX idx_playlist_track_playlist ON playlist_track(playlist_id);

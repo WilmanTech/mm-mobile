@@ -7,6 +7,10 @@ plugins {
     alias(libs.plugins.hilt) apply false
     alias(libs.plugins.ksp) apply false
     alias(libs.plugins.sqldelight) apply false
+    // kotlinCocoapods is bundled inside kotlin-gradle-plugin 2.0+ — declared
+    // apply false here so the :shared module can pick it up without forcing
+    // a fresh version resolution.
+    alias(libs.plugins.kotlinCocoapods) apply false
 }
 
 subprojects {
