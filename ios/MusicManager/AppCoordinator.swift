@@ -251,11 +251,19 @@ final class AppCoordinator: ObservableObject {
     /// anything other than an empty list.
     private func rebuildLibraryGraph() {
         syncTask?.cancel()
-        libraryGraph = LibraryEntry.shared.make(host: host, port: port, tokenStore: authStorage)
-        guard let graph = libraryGraph else { return }
+        // Use the safe `makeOrNull` variant — see LibraryEntry.kt
+        // for the rationale. Returning nil surfaces as a banner
+        // in the UI rather than a K/N SIGABRT.
+        libraryGraph = LibraryEntry.shared.makeOrNull(host: host, port: port, tokenStore: authStorage)
+        guard let graph = libraryGraph else {
+            Task { @MainActor in
+                self.lastError = "Library init failed — see Xcode console for the underlying error."
+            }
+            return
+        }
         syncTask = Task { [weak self] in
             let result: SyncState? = await withCheckedContinuation { cont in
-                graph.syncCoordinator.syncFull { state, error in
+                graph.syncCoordinator.syncFull { state, _ in
                     cont.resume(returning: state)
                 }
             }

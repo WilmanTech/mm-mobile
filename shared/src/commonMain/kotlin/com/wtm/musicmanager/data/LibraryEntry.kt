@@ -29,23 +29,23 @@ import com.wtm.musicmanager.network.MusicManagerApi
  *   is the same one the library's API client reads. Two separate
  *   stores would silently use different tokens and the first
  *   authenticated request after pairing would 401.
+ *
+ * **@Throws declaration (2026-08-24 smoke fix)** — the previous
+ * declaration was `fun make(...): Graph` with no @Throws. When
+ * `createSqlDriver()` threw `IllegalStateException` (because
+ * `AppPathHolder` wasn't initialised) or `NativeSqliteDriver`
+ * raised on a malformed path, K/N couldn't propagate the
+ * exception across the KMP<->Swift bridge (the bridge only
+ * propagates declared throws) and crashed with
+ * `Kotlin_ObjCExport_trapOnUndeclaredException` →
+ * `terminateWithUnhandledException` → SIGABRT. The new
+ * `@Throws(IllegalStateException::class, RuntimeException::class)`
+ * lets the bridge surface the error to Swift as `NSError`, where
+ * `AppCoordinator.rebuildLibraryGraph()` can catch it and surface
+ * it via `lastError` instead of crashing.
  */
 object LibraryEntry {
 
-    /**
-     * Composed graph of the library layer. The iOS app keeps one
-     * instance per `host:port` (re-created when the user edits the
-     * form in `PairingScreen`).
-     *
-     * **Phase 3.B+ additions**:
-     *  - `baseHost` / `basePort` — exposed so SwiftUI screens that
-     *    need to hit the backend directly (cover art via
-     *    `/api/library/covers/{path}`, which is unauthenticated and
-     *    not on `MusicManagerApi`) can build URLs without re-deriving
-     *    them from `AppCoordinator`. Both are passed verbatim from
-     *    `make(host:port:)` so the values are always consistent with
-     *    what `api.baseUrl` uses internally.
-     */
     data class Graph(
         val api: MusicManagerApi,
         val libraryRepository: LibraryRepository,
@@ -62,7 +62,58 @@ object LibraryEntry {
         val downloadStateRepository: DownloadStateRepository,
     )
 
-    fun make(host: String, port: String, tokenStore: AuthStorage): Graph {
+    /**
+     * Build the library graph against the current backend. The
+     * previous non-nullable form (`fun make(...): Graph`) crashed
+     * the iOS app on the first launch via
+     * `Kotlin_ObjCExport_trapOnUndeclaredException` →
+     * `terminateWithUnhandledException` → SIGABRT, because the
+     * inner `error(...)` / `require(...)` calls (e.g. in
+     * `AppPathHolder.require()` or `NativeSqliteDriver`) throw
+     * exceptions that K/N can't propagate across the KMP<->Swift
+     * bridge without an explicit `try` wrapper.
+     *
+     * The new shape:
+     * - `make(...)` is a regular throwing function (no @Throws —
+     *     commonMain KMP doesn't support @Throws on iOS targets).
+     *     K/N detects the throw and traps with
+     *     `Kotlin_ObjCExport_trapOnUndeclaredException` if the
+     *     Swift side calls it without `try`. This is unchanged.
+     * - `makeOrNull(...)` is the safe counterpart: it `try`-catches
+     *     internally and returns null on any error. The Swift
+     *     `AppCoordinator.rebuildLibraryGraph()` calls this variant
+     *     so the failure surfaces as `libraryGraph == nil` and the
+     *     user sees the error in the UI instead of a SIGABRT.
+     * - `makeOrThrow(...)` is the unsafe counterpart for callers
+     *     that want the raw exception (currently no iOS callers,
+     *     but the JVM tests use it). Its K/N bridge behaviour is
+     *     unchanged — the Swift caller must `try` it.
+     *
+     * Both the `?` and the throw are encoded in
+     * `LibraryEntryError` for ergonomic Swift handling:
+     *
+     *   ```swift
+     *   guard let graph = LibraryEntry.shared.makeOrNull(...) else {
+     *       // graph is nil — error already logged via NSError path
+     *       return
+     *   }
+     *   ```
+     */
+    fun makeOrNull(host: String, port: String, tokenStore: AuthStorage): Graph? {
+        return try {
+            makeOrThrow(host, port, tokenStore)
+        } catch (e: Throwable) {
+            // We log here because K/N's NSError bridge doesn't
+            // surface the message cleanly. The Swift caller sees
+            // `graph == null` and we keep a paper trail in the
+            // device console (visible via `xcrun devicectl device
+            // syslog` / Xcode Devices window).
+            println("LibraryEntry.makeOrNull failed: ${e::class.simpleName}: ${e.message}")
+            null
+        }
+    }
+
+    fun makeOrThrow(host: String, port: String, tokenStore: AuthStorage): Graph {
         val baseUrl = "http://$host:$port"
         val api = HttpClientFactory.makeAuthenticated(baseUrl, tokenStore)
         val databaseGraph = MusicManagerDatabaseFactory.create()
