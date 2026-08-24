@@ -254,10 +254,25 @@ final class AppCoordinator: ObservableObject {
         // Use the safe `makeOrNull` variant — see LibraryEntry.kt
         // for the rationale. Returning nil surfaces as a banner
         // in the UI rather than a K/N SIGABRT.
-        libraryGraph = LibraryEntry.shared.makeOrNull(host: host, port: port, tokenStore: authStorage)
+        //
+        // Phase 3.D follow-up (2026-08-24): NSLog the path and
+        // AppPathHolder state so the user can see the diagnostic
+        // in Xcode → Window → Devices → iPhone 11 → Open Console
+        // when the red error card appears. The previous
+        // implementation only set `coordinator.lastError` which
+        // was rendered by SettingsView — useless when the user
+        // is stuck on the post-pairing placeholder with no way to
+        // navigate elsewhere.
+        NSLog("MM_DEBUG init: host=%@ port=%@", host, port)
+        let pathIsInitialized: Bool = AppPathHolder.shared.isInitialized
+        let pathValue: String? = pathIsInitialized ? AppPathHolder.shared.require() : nil
+        NSLog("MM_DEBUG init: AppPathHolder.isInitialized=%d value=%@", pathIsInitialized ? 1 : 0, pathValue ?? "<nil>")
+        let graph = LibraryEntry.shared.makeOrNull(host: host, port: port, tokenStore: authStorage)
+        NSLog("MM_DEBUG init: makeOrNull returned %@", graph == nil ? "nil (FAILURE)" : "graph (OK)")
+        libraryGraph = graph
         guard let graph = libraryGraph else {
             Task { @MainActor in
-                self.lastError = "Library init failed — see Xcode console for the underlying error."
+                self.lastError = "Library init failed. Path=\(pathValue ?? "<nil>") isInit=\(pathIsInitialized). See Xcode console for full KMP stack trace (search for 'MM_DEBUG init' or 'LibraryEntry.makeOrNull failed'). Reboot and re-launch to retry."
             }
             return
         }

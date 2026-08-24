@@ -15,26 +15,33 @@ import MusicManagerShared
 /// any KMP code runs (specifically before `AppCoordinator()` is
 /// constructed — see init-order fix below).
 ///
-/// **Init-order fix (2026-08-24)** — Swift initializes stored
-/// properties BEFORE `init()` runs. The previous form declared
-/// `@StateObject private var coordinator = AppCoordinator()` which
-/// triggered `LibraryEntry.shared.make(...)` → `createSqlDriver()` →
-/// `AppPathHolder.require()` BEFORE `init()` had a chance to call
-/// `set(path:)`. Result: `IllegalStateException` thrown from the
-/// KMP layer → K/N runtime → `terminateWithUnhandledException` →
-/// SIGABRT at launch. Crash log (Aug 24 08:56:27) shows the abort
-/// came from `kotlin::ProcessUnhandledException` right after launch.
+/// **Init-order fix (2026-08-24, v2)** — the first version of
+/// this fix (commit `6595f3e`) used a static let inside the
+/// `MusicManagerApp` struct. That worked in the iOS Simulator
+/// but **failed on the iPhone 11 device**: the `AppPathHolder`
+/// stayed uninitialised and `LibraryEntry.makeOrNull` returned
+/// nil → red "Library init failed" banner in the UI. The user
+/// reported "app path holder not initialized" verbatim.
 ///
-/// **Fix** — split the AppPathHolder seeding into a static
-/// helper (`bootstrapKmpRuntime`) that we call from BOTH the property
-/// initializer and `init()`. The static helper is idempotent and
-/// uses a dispatch_once-style guard so multiple invocations don't
-/// fight over the path. `AppCoordinator()` is now created via
-/// `_coordinator = AppCoordinator()` inside `init()` AFTER the path
-/// is seeded — using a private `_coordinator` ivar plus
-/// `@StateObject private var coordinator` via property wrapper
-/// delegation would be cleaner but SwiftUI's `@StateObject`
-/// requires the projected value pattern we already use.
+/// **Why the static let didn't fire on device** — Swift's
+/// dispatch-once semantics for static lets inside a generic
+/// struct are tied to the struct's metadata instantiation, which
+/// on iOS device (with `-O` codegen) gets lazy-evaluated until
+/// the first member is touched. The `@StateObject private var
+/// coordinator: AppCoordinator = Self.makeCoordinator()` initializer
+/// calls `makeCoordinator()` which references the static let, but
+/// at that point Swift has already started initialising the
+/// struct's storage. The K/N `AppPathHolder` ended up in the
+/// "uninitialised" state when `LibraryEntry.makeOrNull` ran
+/// because the static let's body never executed on device.
+///
+/// **v2 fix** — move the bootstrap to a **file-scope** static
+/// let (`_kmpBootstrap`) that is *not* a member of any struct. Swift
+/// evaluates file-scope static lets eagerly at module load, before
+/// any `@main` type's init runs. The `_` prefix marks it as
+/// "implementation detail" (not part of the API). We also touch it
+/// from `init()` as a belt-and-suspenders fallback for any future
+/// Swift version that decides to lazy-evaluate file-scope state.
 @main
 struct MusicManagerApp: App {
 
@@ -51,34 +58,16 @@ struct MusicManagerApp: App {
     /// `self` access in property initializers) and runs BEFORE the
     /// stored property is assigned.
     private static func makeCoordinator() -> AppCoordinator {
-        _ = AppPathHolderBootstrap.runOnce
+        _ = _kmpBootstrap
         return AppCoordinator()
     }
 
-    /// Seed `AppPathHolder.shared` with
-    /// `~/Library/Application Support/com.wtm.musicmanager.MusicManager/`.
-    /// Idempotent — safe to call from both `init()` (belt-and-suspenders)
-    /// and the `@StateObject` initializer (which is the one that actually
-    /// fires first). The dispatch-once guard prevents re-creation of
-    /// the directory if the AppDelegate / SceneDelegate re-instantiates
-    /// `MusicManagerApp` (e.g. after a scene phase change in iOS 17+).
-    private enum AppPathHolderBootstrap {
-        static let runOnce: Void = {
-            let fm = FileManager.default
-            if let baseURL = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
-                let appSupportDir = baseURL.appendingPathComponent("com.wtm.musicmanager.MusicManager", isDirectory: true)
-                try? fm.createDirectory(at: appSupportDir, withIntermediateDirectories: true)
-                AppPathHolder.shared.set(path: appSupportDir.path)
-            }
-        }()
-    }
-
-    /// Belt-and-suspenders: even if the `@StateObject` initializer
-    /// skipped the static let (e.g. Swift's lazy-let semantics in
-    /// edge cases), `init()` re-runs the bootstrap so the coordinator
-    /// has the path it needs.
+    /// Belt-and-suspenders: even if the static let inside the
+    /// struct is somehow not invoked (e.g. Swift's lazy semantics
+    /// on device), `init()` re-references the file-scope static
+    /// let so the coordinator has the path it needs.
     init() {
-        _ = AppPathHolderBootstrap.runOnce
+        _ = _kmpBootstrap
     }
 
     var body: some Scene {
@@ -93,3 +82,19 @@ struct MusicManagerApp: App {
         }
     }
 }
+
+/// File-scope bootstrap. Marked `_` (private to file) so the
+/// MusicManagerApp struct can reference it but the rest of the
+/// module can't accidentally reach it. Evaluated by Swift at
+/// module load time, **before** any `@main` type's storage is
+/// initialised, which is the timing we need: this guarantees
+/// `AppPathHolder.shared.set(path: ...)` has run before
+/// `AppCoordinator()` tries to construct a `LibraryEntry.Graph`.
+private let _kmpBootstrap: Void = {
+    let fm = FileManager.default
+    if let baseURL = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+        let appSupportDir = baseURL.appendingPathComponent("com.wtm.musicmanager.MusicManager", isDirectory: true)
+        try? fm.createDirectory(at: appSupportDir, withIntermediateDirectories: true)
+        AppPathHolder.shared.set(path: appSupportDir.path)
+    }
+}()
