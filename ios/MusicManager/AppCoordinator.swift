@@ -324,6 +324,17 @@ final class AppCoordinator: ObservableObject {
             }
             NSLog("MM_DEBUG sync: cont resumed result=%@",
                   result.map { String(describing: $0) } ?? "<nil>")
+            // v2026-08-24 diagnostic: definitive "did sync write to
+            // the DB" check. Reads raw row counts from the
+            // SQLDelight-generated queries. If artists == 0 and the
+            // sync callback reported non-zero counts, the
+            // transaction was rolled back or the upsert silently
+            // failed. If artists > 0 and the UI is still empty,
+            // the bug is on the read side (Flow collector /
+            // @Published wiring).
+            await MainActor.run {
+                self?.dumpDatabaseRowCounts(graph: graph)
+            }
             await MainActor.run {
                 self?.lastError = Self.errorMessage(for: result)
             }
@@ -350,6 +361,26 @@ final class AppCoordinator: ObservableObject {
             return "Library sync failed: \(failed.reason)"
         }
         return nil
+    }
+
+    /// v2026-08-24 diagnostic: raw row counts after syncFull().
+    /// Reads via the SQLDelight-generated queries, not the
+    /// LibraryRepository Flow (which might cache/transform). If
+    /// these numbers are non-zero but the UI shows empty, the bug
+    /// is in the read pipeline (Flow → @Published → SwiftUI). If
+    /// they are zero but the sync callback reported non-zero
+    /// counts, the upsert transaction silently rolled back.
+    private func dumpDatabaseRowCounts(graph: LibraryEntry.Graph) {
+        let q = graph.databaseForDiagnostic.queriesQueries
+        let artistCount = (try? q.selectTrackCount().executeAsOne()) ?? -1
+        NSLog("MM_DEBUG dbcounts: tracks=%lld (using selectTrackCount as proxy; see code)", artistCount)
+        // For artists/albums we don't have a dedicated count
+        // helper in the generated API on this branch — call the
+        // list queries with executeAsList().count.
+        let artists: Int = (try? q.selectAllArtists().executeAsList().count) ?? -1
+        let albums: Int = (try? q.selectAllAlbums().executeAsList().count) ?? -1
+        let playlists: Int = (try? q.selectAllPlaylists().executeAsList().count) ?? -1
+        NSLog("MM_DEBUG dbcounts: artist_rows=%d album_rows=%d playlist_rows=%d", artists, albums, playlists)
     }
 
     /// Start a pairing session. The backend returns the 4-word code immediately;
