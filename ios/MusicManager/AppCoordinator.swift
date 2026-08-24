@@ -273,6 +273,20 @@ final class AppCoordinator: ObservableObject {
         }
     }
 
+    /// Public re-entry point for `rebuildLibraryGraph()`. The PairedScreen
+    /// "Reintentar" button calls this when the user has fixed
+    /// whatever was wrong (e.g. they updated the backend library path,
+    /// or they want to retry after a transient KMP failure). Clears the
+    /// previous `lastError` so the error card hides, then re-runs the
+    /// graph build. The new state (graph or nil) is re-published via
+    /// `libraryGraph = ...` which SwiftUI picks up via `@Published`.
+    func retryLibraryInit() {
+        Task { @MainActor in
+            self.lastError = nil
+        }
+        rebuildLibraryGraph()
+    }
+
     private static func errorMessage(for state: SyncState?) -> String? {
         guard let state else { return "Library sync returned no state" }
         if let failed = state as? SyncStateFailed {

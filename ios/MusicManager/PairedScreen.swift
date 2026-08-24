@@ -55,13 +55,92 @@ struct PairedScreen: View {
     private var pairedPlaceholder: some View {
         ScrollView {
             VStack(spacing: 20) {
+                // Phase 3.D follow-up (2026-08-24): surface the
+                // library-init error inline. The previous form
+                // only set `coordinator.lastError` which is
+                // rendered by SettingsView — useless when the user
+                // is stuck on the post-pairing placeholder with
+                // no way to navigate elsewhere (the unpair button
+                // is up in the toolbar but easy to miss). The new
+                // inline error card makes the failure mode obvious
+                // and gives the user a one-tap retry path.
+                if let errorMessage = coordinator.lastError,
+                   !errorMessage.isEmpty {
+                    errorCard(message: errorMessage)
+                        .padding(.horizontal, 16)
+                }
+
                 connectedCard
                     .padding(.horizontal, 16)
                     .padding(.top, 24)
 
                 backendCard
                     .padding(.horizontal, 16)
+
+                retryCard
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
             }
+        }
+    }
+
+    /// Red error banner shown when the KMP data layer
+    /// (`LibraryEntry.makeOrNull`) returned nil. The full technical
+    /// detail also lives in the device console (Xcode → Window →
+    /// Devices → iPhone 11 → Open Console) under the
+    /// "LibraryEntry.makeOrNull failed: …" prefix.
+    private func errorCard(message: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(Color.red)
+                    .font(.title2)
+                Text("Library init failed")
+                    .font(.headline)
+                    .foregroundStyle(Color.mmPrimaryText)
+                Spacer()
+            }
+
+            Text(message)
+                .font(.footnote)
+                .foregroundStyle(Color.mmSecondaryText)
+                .lineLimit(4)
+
+            Text("Check the device console (Xcode → Devices → iPhone 11 → Open Console) for the underlying Kotlin exception. The KMP log line starts with 'LibraryEntry.makeOrNull failed:'.")
+                .font(.caption2)
+                .foregroundStyle(Color.mmTextDisabled)
+                .lineLimit(4)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.red.opacity(0.12))
+        .overlay(
+            RoundedRectangle(cornerRadius: MusicManagerTheme.cornerRadius)
+                .stroke(Color.red.opacity(0.6), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: MusicManagerTheme.cornerRadius))
+    }
+
+    /// "Reintentar" button — re-invokes `rebuildLibraryGraph()` to
+    /// re-attempt `LibraryEntry.makeOrNull`. Useful when the
+    /// underlying error is transient (e.g. AppPathHolder was a
+    /// race — though with the latest fix that should no longer
+    /// happen) or when the user has manually fixed whatever was
+    /// wrong (e.g. moved the music library path on the backend).
+    private var retryCard: some View {
+        Button {
+            coordinator.retryLibraryInit()
+        } label: {
+            HStack {
+                Image(systemName: "arrow.clockwise")
+                Text("Reintentar inicialización")
+                    .font(.subheadline.weight(.semibold))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .background(Color.mmAccentPrimary.opacity(0.18))
+            .foregroundStyle(Color.mmAccentPrimary)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
         }
     }
 
