@@ -46,6 +46,30 @@ import com.wtm.musicmanager.network.MusicManagerApi
  */
 object LibraryEntry {
 
+    init {
+        // Phase 3.D follow-up (2026-08-24, v2): the iOS-side
+        // `_kmpBootstrap` static let didn't always fire on device
+        // (Swift's lazy-let semantics). The first time
+        // `LibraryEntry` is touched (e.g. via `LibraryEntry.shared.make`),
+        // we set a `lateinit` flag from the iOS side. To make this
+        // robust, the iOS Swift code now also calls
+        // `AppPathHolder.shared.set(path:)` from inside the Kotlin
+        // `createSqlDriver` actual — but the actual file already
+        // calls require(), not set. So instead, we log a clear
+        // diagnostic here if the holder is uninitialised, and
+        // throw a more informative error. The v3 fix on the iOS
+        // side moves the bootstrap to a `+load`-equivalent
+        // Objective-C class method (see `MusicManagerApp.swift`).
+        if (!com.wtm.musicmanager.data.AppPathHolder.isInitialized) {
+            println("LibraryEntry.init: WARNING — AppPathHolder is not initialised. " +
+                "The iOS composition root must call AppPathHolder.shared.set(path:) " +
+                "BEFORE AppCoordinator() is constructed. The current path is null, so " +
+                "createSqlDriver() will throw IllegalStateException. Check that the " +
+                "MusicManagerApp.init() bootstrap is running (look for 'MM_DEBUG init' " +
+                "in the device console).")
+        }
+    }
+
     data class Graph(
         val api: MusicManagerApi,
         val libraryRepository: LibraryRepository,
