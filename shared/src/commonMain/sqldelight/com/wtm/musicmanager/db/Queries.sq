@@ -6,6 +6,25 @@ upsertArtist:
 INSERT OR REPLACE INTO artist(id, name, album_count, track_count, cover_url, cover_path, synced_at)
 VALUES (?, ?, ?, ?, ?, ?, ?);
 
+-- Phase 3.D (smoke follow-up 2026-08-23): used by
+-- SqlDelightSyncUpsertQueries.upsertAlbum to denormalize the
+-- artist_name at sync time. Without this, the AlbumsListView /
+-- AlbumDetailView would render an empty artist name because the
+-- schema's `album.artist_name` column is only populated by the
+-- sync upsert path (the network AlbumDto doesn't carry the name
+-- — only artist_id). Using `name` (not `name COLLATE NOCASE`)
+-- because the value is round-tripped for display, not searched.
+selectArtistNameById:
+SELECT name FROM artist WHERE id = ?;
+
+-- Phase 3.D (smoke follow-up 2026-08-23): same denormalization for
+-- the track's album_title field. TrackDto carries album_id only;
+-- the resolver in upsertTrack() looks the title up from the local
+-- album cache (albums are upserted between artists and tracks in
+-- SyncCoordinator, so this hits a row).
+selectAlbumTitleById:
+SELECT title FROM album WHERE id = ?;
+
 upsertAlbum:
 INSERT OR REPLACE INTO album(id, title, artist_id, artist_name, year, track_count, duration_ms, cover_url, cover_path, is_downloaded, synced_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);

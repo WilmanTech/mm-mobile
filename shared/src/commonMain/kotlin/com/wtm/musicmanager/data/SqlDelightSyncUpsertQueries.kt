@@ -50,11 +50,30 @@ class SqlDelightSyncUpsertQueries(
     }
 
     override fun upsertAlbum(album: Album, syncedAt: String) {
+        // Phase 3.D smoke follow-up (2026-08-23): the network AlbumDto
+        // carries artist_id but not artist_name. Until the backend
+        // joins the two for us, we resolve the name from the local
+        // artist cache. The artists table is upserted *before*
+        // albums in SyncCoordinator.syncFull()/syncChanges(), so
+        // when we get here the lookup is guaranteed to hit a row
+        // for any album whose artist is in the library.
+        //
+        // **Empty fallback** — if the artist isn't in the local
+        // cache (rare: album arrived before its artist), we leave
+        // `artist_name` as "" rather than failing the upsert. The
+        // UI then renders an empty artist name; the user can trigger
+        // a full re-sync to repopulate.
+        val resolvedArtistName: String = runCatching {
+            db.queriesQueries
+                .selectArtistNameById(album.artistId)
+                .executeAsOneOrNull()
+                ?: ""
+        }.getOrDefault("")
         db.queriesQueries.upsertAlbum(
             id = album.id,
             title = album.title,
             artist_id = album.artistId,
-            artist_name = "", // denormalized at sync time; UI joins via Artist
+            artist_name = resolvedArtistName,
             year = album.year?.toLong(),
             track_count = 0L,
             duration_ms = 0L,
@@ -66,13 +85,35 @@ class SqlDelightSyncUpsertQueries(
     }
 
     override fun upsertTrack(track: Track, syncedAt: String) {
+        // Phase 3.D smoke follow-up (2026-08-23): same denormalization
+        // pattern as `upsertAlbum` — the network TrackDto carries
+        // album_id / artist_id but not their names. We look them up
+        // from the local cache. The order in SyncCoordinator guarantees
+        // artists → albums → tracks, so both lookups hit a row.
+        //
+        // **Empty fallback** — if either parent isn't in the cache
+        // yet (rare), we leave the field blank rather than failing
+        // the upsert. A subsequent re-sync will populate the missing
+        // names.
+        val resolvedAlbumTitle: String = runCatching {
+            db.queriesQueries
+                .selectAlbumTitleById(track.albumId)
+                .executeAsOneOrNull()
+                ?: ""
+        }.getOrDefault("")
+        val resolvedArtistName: String = runCatching {
+            db.queriesQueries
+                .selectArtistNameById(track.artistId)
+                .executeAsOneOrNull()
+                ?: ""
+        }.getOrDefault("")
         db.queriesQueries.upsertTrack(
             id = track.id,
             title = track.title,
             album_id = track.albumId,
-            album_title = "", // denormalized at sync time
+            album_title = resolvedAlbumTitle,
             artist_id = track.artistId,
-            artist_name = "",
+            artist_name = resolvedArtistName,
             duration_ms = track.durationMs ?: 0L,
             track_number = track.trackNumber?.toLong(),
             bitrate = track.bitrate?.toLong(),

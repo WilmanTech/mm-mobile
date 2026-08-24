@@ -34,13 +34,25 @@ echo "════════════════════════�
 
 echo ""
 echo "▸ iPhone status..."
-DEVICE_STATE=$(xcrun devicectl list devices 2>&1 | grep "$DEVICE_UDID" | awk '{print $NF}')
-if [ "$DEVICE_STATE" != "available" ] && [ "$DEVICE_STATE" != "(paired)" ]; then
-    echo "  ✗ iPhone is '$DEVICE_STATE'. Unlock it + tap 'Trust' in iOS VPN & Device Management."
-    echo "    Then re-run this script."
-    exit 1
-fi
-echo "  ✓ iPhone available"
+# Output format: "<name with spaces>  <hostname>  <UDID>  <state>  <model>"
+# The human name has spaces, so we can't use $N positional awk fields
+# reliably. Instead, grep the UDID line and split on the UDID, then take
+# the field after it (the state).
+DEVICE_LINE=$(xcrun devicectl list devices 2>&1 | grep "$DEVICE_UDID")
+DEVICE_STATE=$(echo "$DEVICE_LINE" | awk -v udid="$DEVICE_UDID" '{
+  # Find UDID position, take next non-empty field
+  for (i=1;i<=NF;i++) if ($i == udid) { print $(i+1); exit }
+}')
+case "$DEVICE_STATE" in
+    available|connected|"(paired)")
+        echo "  ✓ iPhone ready (state: $DEVICE_STATE)"
+        ;;
+    *)
+        echo "  ✗ iPhone is '$DEVICE_STATE'. Unlock it + tap 'Trust' in iOS VPN & Device Management."
+        echo "    Then re-run this script."
+        exit 1
+        ;;
+esac
 
 echo ""
 echo "▸ App binary..."
@@ -98,10 +110,28 @@ echo ""
 echo "▸ Launching..."
 xcrun devicectl device terminate app --device "$DEVICE_UDID" "$BUNDLE_ID" 2>&1 | tail -1 || true
 sleep 1
-xcrun devicectl device process launch --device "$DEVICE_UDID" "$BUNDLE_ID" \
+LAUNCH_OUT=$(xcrun devicectl device process launch --device "$DEVICE_UDID" "$BUNDLE_ID" \
     -MM_TEST_TOKEN "$TOKEN" \
     -MM_TEST_HOST "192.168.1.201" \
-    -MM_TEST_PORT "$PORT" 2>&1 | tail -2
+    -MM_TEST_PORT "$PORT" 2>&1)
+LAUNCH_EXIT=$?
+echo "$LAUNCH_OUT" | tail -3
+if [ $LAUNCH_EXIT -ne 0 ] || echo "$LAUNCH_OUT" | grep -qiE "Unable to launch|BSErrorCode.*Security|invalid code signature"; then
+    echo ""
+    echo "  ✗ Launch failed (likely code-signing trust)."
+    echo ""
+    echo "  ╔════════════════════════════════════════════════════════════════╗"
+    echo "  ║  MANUAL STEP REQUIRED on iPhone 11:                            ║"
+    echo "  ║                                                                ║"
+    echo "  ║  1. Open Settings → General → VPN & Device Management          ║"
+    echo "  ║  2. Tap the developer profile (Apple Development: ...)         ║"
+    echo "  ║  3. Tap 'Trust \"<email>\"' then confirm                           ║"
+    echo "  ║  4. Re-run this script                                         ║"
+    echo "  ╚════════════════════════════════════════════════════════════════╝"
+    echo ""
+    echo "  Token (for manual launch via Xcode): ${TOKEN:0:20}..."
+    exit 1
+fi
 echo "  ✓ Launched with token bypass"
 
 # ── 5. Test checklist ─────────────────────────────────────────────────────────
