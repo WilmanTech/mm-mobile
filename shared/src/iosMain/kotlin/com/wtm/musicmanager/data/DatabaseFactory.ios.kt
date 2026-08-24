@@ -42,6 +42,32 @@ import com.wtm.musicmanager.db.MusicManagerDatabase
  * `FileManager.createDirectory(at:withIntermediateDirectories:true)`.
  */
 actual fun createSqlDriver(): SqlDriver {
-    val dbPath = AppPathHolder.require() + "/musicmanager.db"
-    return NativeSqliteDriver(MusicManagerDatabase.Schema, dbPath)
+    val dbDir = AppPathHolder.require()
+    val dbName = "musicmanager.db"
+    // v2026-08-24 fix: SQLDelight 2.0 NativeSqliteDriver rejects `name`
+    // values that contain path separators
+    // ("IllegalArgumentException: File … contains a path separator"
+    //  — thrown from co.touchlab.sqliter.DatabaseManager when name has
+    //  '/'). The constructor signature is
+    //   NativeSqliteDriver(schema, name, …, onConfiguration)
+    // where `name` must be the bare filename; the parent directory is
+    // configured via the `onConfiguration` callback as
+    //   DatabaseConfiguration.Extended(basePath = <dir>)
+    // (DatabaseConfiguration.Extended is the data class that owns
+    //  basePath, foreignKeyConstraints, pageSize, etc.). Default
+    // basePath is the platform default location (Application Support
+    // on iOS), but we set it explicitly to the AppPathHolder value
+    // so the file lives in the directory Swift created via
+    // FileManager.createDirectory during init.
+    val onConfig: (co.touchlab.sqliter.DatabaseConfiguration) -> co.touchlab.sqliter.DatabaseConfiguration =
+        { config ->
+            config.copy(
+                extendedConfig = config.extendedConfig.copy(basePath = dbDir),
+            )
+        }
+    return NativeSqliteDriver(
+        schema = MusicManagerDatabase.Schema,
+        name = dbName,
+        onConfiguration = onConfig,
+    )
 }
