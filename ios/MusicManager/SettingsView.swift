@@ -36,6 +36,7 @@ struct SettingsView: View {
 
     @EnvironmentObject private var coordinator: AppCoordinator
     let graph: LibraryEntry.Graph
+    @ObservedObject var player: AvPlayerEngine
 
     @State private var trackCount: Int64 = 0
     @State private var syncStateClass: String = "Idle"
@@ -64,12 +65,33 @@ struct SettingsView: View {
                         aboutSection
                     }
                     .padding(.vertical, 16)
+                    // Phase 3.D smoke follow-up (2026-08-23): reserve
+                    // space below the scroll content so the mini
+                    // player + tab bar don't hide the last row. Same
+                    // calculation as LibraryScreen — 64pt mini bar
+                    // + 49pt tab bar when the engine has a track
+                    // loaded, 0 otherwise. Without this padding the
+                    // user can't scroll the Settings content past the
+                    // mini-player overlay (the user reported this as
+                    // "pantalla de sync no permite llegar al final
+                    // porque miniplayer lo bloquea").
+                    .padding(.bottom, bottomPaddingForMiniPlayer)
                 }
             }
             .navigationTitle("Ajustes")
             .navigationBarTitleDisplayMode(.large)
         }
         .task { await observe() }
+    }
+
+    /// Mirrors `LibraryScreen.bottomPaddingForMiniPlayer` so the
+    /// Settings scroll content doesn't disappear under the mini
+    /// player overlay when a track is loaded.
+    private var bottomPaddingForMiniPlayer: CGFloat {
+        switch player.state {
+        case .idle, .error: return 0
+        case .loading, .playing, .paused: return 64 + 49
+        }
     }
 
     // MARK: - Sections
@@ -369,40 +391,77 @@ struct SettingsView: View {
 
     // MARK: - Sync triggers
 
-    private func triggerFull() async {
-        let result: Any? = await withCheckedContinuation { cont in
-            graph.syncCoordinator.syncFull { state, _ in
-                cont.resume(returning: state)
-            }
-        }
-        if let failed = result as? SyncStateFailed {
-            await MainActor.run { self.lastError = failed.reason }
-        } else {
-            await MainActor.run {
-                self.lastError = nil
-                if result is SyncStateCompleted {
-                    SettingsStore.recordSyncCompleted()
-                    self.lastSyncDate = SettingsStore.lastSyncDate()
+    /// Run a sync via the SyncCoordinator's completion-handler bridge
+    /// and return the resulting state, or the NSError's localized
+    /// description if the bridge hands us a non-nil error.
+    ///
+    /// Phase 3.D smoke follow-up (2026-08-23): previously this
+    /// ignored the NSError arg (`_`), which silently dropped the
+    /// bridge's "operation cancelled" / "no JSON" / etc. errors.
+    /// The user reported "settings error de sync" but the UI never
+    /// showed the reason because `SyncState?` is what we surfaced;
+    /// the NSError was thrown away. We now fold both into a single
+    /// result string.
+    private enum SyncOutcome {
+        case completed(SyncStateCompleted)
+        case failed(String)
+    }
+
+    private func runSync(
+        _ operation: @escaping (@escaping (Any?, Error?) -> Void) -> Void,
+    ) async -> SyncOutcome {
+        await withCheckedContinuation { cont in
+            operation { state, error in
+                if let error = error {
+                    cont.resume(returning: .failed(
+                        "Sync error: \(error.localizedDescription)"
+                    ))
+                } else if let completed = state as? SyncStateCompleted {
+                    cont.resume(returning: .completed(completed))
+                } else if let failed = state as? SyncStateFailed {
+                    cont.resume(returning: .failed(failed.reason))
+                } else {
+                    // Bridge handed us state == nil without an error.
+                    // This happens when the K/N bridge can't convert
+                    // the sealed-class result. Show a generic message
+                    // so the user knows "something went wrong" instead
+                    // of silently no-op'ing.
+                    cont.resume(returning: .failed(
+                        "Sync returned no state (bridge conversion failed)."
+                    ))
                 }
             }
         }
     }
 
-    private func triggerDelta() async {
-        let result: Any? = await withCheckedContinuation { cont in
-            graph.syncCoordinator.syncChanges { state, _ in
-                cont.resume(returning: state)
+    private func triggerFull() async {
+        let outcome = await runSync { handler in
+            graph.syncCoordinator.syncFull(completionHandler: handler)
+        }
+        await MainActor.run {
+            switch outcome {
+            case .completed:
+                self.lastError = nil
+                SettingsStore.recordSyncCompleted()
+                self.lastSyncDate = SettingsStore.lastSyncDate()
+            case .failed(let reason):
+                self.lastError = reason
             }
         }
-        if let failed = result as? SyncStateFailed {
-            await MainActor.run { self.lastError = failed.reason }
-        } else {
-            await MainActor.run {
+    }
+
+    private func triggerDelta() async {
+        let outcome = await runSync { handler in
+            graph.syncCoordinator.syncChanges(completionHandler: handler)
+        }
+        await MainActor.run {
+            switch outcome {
+            case .completed:
                 self.lastError = nil
-                if result is SyncStateCompleted {
-                    SettingsStore.recordSyncCompleted()
-                    self.lastSyncDate = SettingsStore.lastSyncDate()
-                }
+                SettingsStore.recordSyncCompleted()
+                self.lastSyncDate = SettingsStore.lastSyncDate()
+            case .failed(let reason):
+                self.lastError = reason
             }
         }
     }

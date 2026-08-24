@@ -69,7 +69,7 @@ struct MainTabView: View {
                     }
                     .tag(Tab.library)
 
-                SettingsView(graph: graph)
+                SettingsView(graph: graph, player: player)
                     .tabItem {
                         Label("Ajustes", systemImage: "gearshape.fill")
                     }
