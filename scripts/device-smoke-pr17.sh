@@ -116,17 +116,23 @@ LAUNCH_OUT=$(xcrun devicectl device process launch --device "$DEVICE_UDID" "$BUN
     -MM_TEST_PORT "$PORT" 2>&1)
 LAUNCH_EXIT=$?
 echo "$LAUNCH_OUT" | tail -3
-if [ $LAUNCH_EXIT -ne 0 ] || echo "$LAUNCH_OUT" | grep -qiE "Unable to launch|BSErrorCode.*Security|invalid code signature"; then
+if [ $LAUNCH_EXIT -ne 0 ] || echo "$LAUNCH_OUT" | grep -qiE "Unable to launch|BSErrorCode.*Security|invalid code signature|was not, or could not be, unlocked|RequestDenied|Locked"; then
+    if echo "$LAUNCH_OUT" | grep -qiE "was not, or could not be, unlocked|Locked"; then
+        REASON="iPhone is locked — wake + unlock the screen."
+    else
+        REASON="code-signing trust not granted."
+    fi
     echo ""
-    echo "  ✗ Launch failed (likely code-signing trust)."
+    echo "  ✗ Launch failed ($REASON)"
     echo ""
     echo "  ╔════════════════════════════════════════════════════════════════╗"
     echo "  ║  MANUAL STEP REQUIRED on iPhone 11:                            ║"
     echo "  ║                                                                ║"
-    echo "  ║  1. Open Settings → General → VPN & Device Management          ║"
-    echo "  ║  2. Tap the developer profile (Apple Development: ...)         ║"
-    echo "  ║  3. Tap 'Trust \"<email>\"' then confirm                           ║"
-    echo "  ║  4. Re-run this script                                         ║"
+    echo "  ║  1. Wake + UNLOCK the iPhone (the home screen, not just face)  ║"
+    echo "  ║  2. Settings → General → VPN & Device Management               ║"
+    echo "  ║  3. Tap the developer profile (Apple Development: ...)         ║"
+    echo "  ║  4. Tap 'Trust \"<email>\"' then confirm                           ║"
+    echo "  ║  5. Re-run this script                                         ║"
     echo "  ╚════════════════════════════════════════════════════════════════╝"
     echo ""
     echo "  Token (for manual launch via Xcode): ${TOKEN:0:20}..."
