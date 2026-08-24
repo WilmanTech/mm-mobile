@@ -314,11 +314,16 @@ final class AppCoordinator: ObservableObject {
             return
         }
         syncTask = Task { [weak self] in
+            NSLog("MM_DEBUG sync: invoking syncFull()")
             let result: SyncState? = await withCheckedContinuation { cont in
-                graph.syncCoordinator.syncFull { state, _ in
+                graph.syncCoordinator.syncFull { state, error in
+                    NSLog("MM_DEBUG sync: callback fired state=%@ error=%@",
+                          String(describing: state), error.map { String(describing: $0) } ?? "<nil>")
                     cont.resume(returning: state)
                 }
             }
+            NSLog("MM_DEBUG sync: cont resumed result=%@",
+                  result.map { String(describing: $0) } ?? "<nil>")
             await MainActor.run {
                 self?.lastError = Self.errorMessage(for: result)
             }
